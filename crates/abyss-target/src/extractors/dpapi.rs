@@ -27,7 +27,9 @@ impl Extractor for DpapiExtractor {
         ctx: &mut ExtractionContext,
         collector: &mut Collector,
     ) -> Result<(), TargetError> {
-        let raw = ctx.dpapi_system_raw.clone().unwrap();
+        let raw = ctx.dpapi_system_raw.clone().ok_or_else(|| TargetError::OpenFailed {
+            detail: "DPAPI_SYSTEM LSA secret not available".to_string(),
+        })?;
 
         // Build keyring from the DPAPI_SYSTEM LSA secret.
         let keyring = DpapiKeyring::new().with_lsa_secrets(vec![raw]);

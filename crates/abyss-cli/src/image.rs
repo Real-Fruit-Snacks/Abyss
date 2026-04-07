@@ -13,7 +13,7 @@ pub fn run(
     let mut target = match Target::open(Path::new(path)) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("Error opening target: {}", e);
+            eprintln!("Error opening '{}': {}", path, e);
             return 2;
         }
     };

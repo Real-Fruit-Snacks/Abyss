@@ -28,7 +28,9 @@ impl Extractor for BrowserExtractor {
         ctx: &mut ExtractionContext,
         collector: &mut Collector,
     ) -> Result<(), TargetError> {
-        let keyring = ctx.dpapi_keyring.as_ref().unwrap();
+        let keyring = ctx.dpapi_keyring.as_ref().ok_or_else(|| TargetError::OpenFailed {
+            detail: "DPAPI keyring not available (run DPAPI extractor first)".to_string(),
+        })?;
 
         for (browser_name, local_state, login_data) in &ctx.browser_data {
             let credentials =

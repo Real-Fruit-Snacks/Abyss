@@ -34,7 +34,9 @@ impl Extractor for SamExtractor {
             ctx.syskey = Some(syskey);
         }
 
-        let syskey = ctx.syskey.as_ref().unwrap();
+        let syskey = ctx.syskey.as_ref().ok_or_else(|| TargetError::OpenFailed {
+            detail: "SYSKEY not available after derivation".to_string(),
+        })?;
 
         // Take the SAM hive out to avoid simultaneous borrows.
         let mut sam = ctx.sam_hive.take().ok_or_else(|| TargetError::OpenFailed {

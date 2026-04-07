@@ -4,7 +4,7 @@
 //! Windows Domain Controller disk images. Requires the SYSTEM hive for SYSKEY
 //! derivation and the NTDS.dit file containing the datatable.
 
-use abyss_crypto::{decrypt_ntds_hash, decrypt_pek, derive_syskey};
+use abyss_crypto::{decrypt_ntds_hash, decrypt_ntds_hash_history, decrypt_pek, derive_syskey};
 use abyss_ese::EseDatabase;
 use abyss_output::collector::Collector;
 use abyss_output::finding::{Finding, NtdsHashFinding, hex_encode};
@@ -26,6 +26,10 @@ const COL_USER_ACCOUNT_CONTROL: &str = "ATTq589922";
 const COL_PEK_LIST: &str = "ATTk589918";
 /// NTDS datatable column name for SAM account type.
 const COL_SAM_ACCOUNT_TYPE: &str = "ATTb590606";
+/// NTDS datatable column name for ntPwdHistory (NT hash history).
+const COL_NT_HASH_HISTORY: &str = "ATTk589918";
+/// NTDS datatable column name for lmPwdHistory (LM hash history).
+const COL_LM_HASH_HISTORY: &str = "ATTk589984";
 
 /// SAM_NORMAL_USER_ACCOUNT value (805306368 decimal = 0x30000000).
 const SAM_NORMAL_USER_ACCOUNT: u32 = 0x30000000;
@@ -66,7 +70,9 @@ impl Extractor for NtdsExtractor {
             ctx.syskey = Some(syskey);
         }
 
-        let syskey = ctx.syskey.as_ref().unwrap();
+        let syskey = ctx.syskey.as_ref().ok_or_else(|| TargetError::OpenFailed {
+            detail: "SYSKEY not available after derivation".to_string(),
+        })?;
 
         // 2. Open NTDS.dit as ESE database.
         let ntds_data = ctx.ntds_dit.take().ok_or_else(|| TargetError::OpenFailed {

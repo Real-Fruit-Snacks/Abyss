@@ -6,7 +6,7 @@ pub fn run(path: &str, output_format: OutputFormat) -> i32 {
     let target = match Target::open(Path::new(path)) {
         Ok(t) => t,
         Err(e) => {
-            eprintln!("Error opening target: {}", e);
+            eprintln!("Error opening '{}': {}", path, e);
             return 2;
         }
     };

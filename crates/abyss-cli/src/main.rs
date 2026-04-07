@@ -93,9 +93,13 @@ fn main() {
     }
 
     let output_format = match cli.output.as_str() {
+        "text" => OutputFormat::Text,
         "json" => OutputFormat::Json,
         "hashcat" => OutputFormat::Hashcat,
-        _ => OutputFormat::Text,
+        other => {
+            eprintln!("Error: unknown output format '{}' (valid: text, json, hashcat)", other);
+            std::process::exit(1);
+        }
     };
 
     let exit_code = match cli.command {

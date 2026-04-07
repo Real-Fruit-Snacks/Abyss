@@ -34,7 +34,9 @@ impl Extractor for LsaExtractor {
             ctx.syskey = Some(syskey);
         }
 
-        let syskey = *ctx.syskey.as_ref().unwrap();
+        let syskey = *ctx.syskey.as_ref().ok_or_else(|| TargetError::OpenFailed {
+            detail: "SYSKEY not available after derivation".to_string(),
+        })?;
 
         // Take the SECURITY hive out to avoid simultaneous borrows.
         let mut security = ctx.security_hive.take().ok_or_else(|| TargetError::OpenFailed {
@@ -49,7 +51,9 @@ impl Extractor for LsaExtractor {
             ctx.lsa_key = Some(lsa_key);
         }
 
-        let lsa_key = ctx.lsa_key.clone().unwrap();
+        let lsa_key = ctx.lsa_key.clone().ok_or_else(|| TargetError::OpenFailed {
+            detail: "LSA key not available after derivation".to_string(),
+        })?;
 
         let secrets = extract_lsa_secrets(&mut security, &lsa_key).map_err(|e| TargetError::OpenFailed {
             detail: format!("LSA extraction: {e}"),
