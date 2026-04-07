@@ -5,11 +5,14 @@
 //!
 //! Supported PEK versions:
 //!   - Version 2 (pre-Windows 2019): RC4-based PEK decryption
-//!   - Version 3 (Windows 2019+): not yet supported (AES-based)
+//!   - Version 3 (Windows 2019+): AES-256-CBC PEK decryption via PBKDF2-HMAC-SHA512
 //!
-//! After PEK decryption, each user's encrypted NT/LM hash is decrypted in two
-//! steps: RC4 with PEK-derived key, then DES with RID-derived keys (same final
-//! step as SAM hash extraction).
+//! Supported per-hash encryption:
+//!   - Version 1 (pre-Server 2016): RC4 with MD5(PEK + key_material)
+//!   - Version 2 (Server 2016+): AES-128-CBC with PEK as key, salt as IV
+//!
+//! After decryption, the final DES step with RID-derived keys is applied
+//! (same as SAM hash extraction).
 
 use crate::error::CryptoError;
 use crate::sam::des_decrypt_hash;
@@ -190,14 +193,8 @@ fn aes_256_cbc_decrypt(key: &[u8; 32], iv: &[u8], data: &[u8]) -> Result<Vec<u8>
 
 /// Decrypt an NTDS password hash history blob using the PEK and RID.
 ///
-/// The history blob format is the same as a single hash but the RC4-decrypted
-/// payload contains multiple concatenated 16-byte hashes:
-///   `[header:8][key_material:16][enc_hash1:16][enc_hash2:16]...`
-///
-/// Decryption steps:
-///   1. RC4 key = MD5(PEK + key_material)
-///   2. RC4 decrypt the entire payload after the 8-byte header
-///   3. Split result into 16-byte chunks, DES-decrypt each with the RID
+/// Supports both v1 (RC4) and v2 (AES) encryption formats.
+/// The decrypted payload contains concatenated 16-byte hashes.
 ///
 /// Returns an empty Vec if the blob is too short to contain any entries.
 pub fn decrypt_ntds_hash_history(
@@ -206,22 +203,16 @@ pub fn decrypt_ntds_hash_history(
     rid: u32,
 ) -> Result<Vec<Vec<u8>>, CryptoError> {
     if encrypted.len() < 40 {
-        // Need at least header(8) + key_material(16) + one hash(16).
         return Ok(vec![]);
     }
 
-    let key_material = &encrypted[8..24];
-    let enc_payload = &encrypted[24..];
+    let hash_version = u16::from_le_bytes([encrypted[0], encrypted[1]]);
 
-    // RC4 key = MD5(PEK + key_material)
-    let mut hasher = md5::Md5::new();
-    hasher.update(pek);
-    hasher.update(key_material);
-    let rc4_key = hasher.finalize();
-
-    let mut data = enc_payload.to_vec();
-    let mut rc4: Rc4<U16> = Rc4KeyInit::new(rc4_key.as_slice().into());
-    rc4.apply_keystream(&mut data);
+    let data = match hash_version {
+        1 => decrypt_ntds_hash_v1(encrypted, pek)?,
+        2 => decrypt_ntds_hash_v2_aes(encrypted, pek)?,
+        _ => decrypt_ntds_hash_v1(encrypted, pek)?,
+    };
 
     // Each 16-byte chunk is a DES-encrypted hash entry.
     let mut hashes = Vec::new();
@@ -240,18 +231,44 @@ pub fn decrypt_ntds_hash_history(
 
 /// Decrypt an NTDS hash (NT or LM) using the PEK and RID.
 ///
-/// The encrypted hash blob format (version 1):
-///   `[header:8][key_material:16][encrypted_hash...]`
+/// Supports two encryption formats:
+///   - **Version 1** (RC4, pre-Server 2016):
+///     `[version:2][_:2][header:4][key_material:16][rc4_encrypted_hash...]`
+///     Decrypt: RC4(MD5(PEK + key_material), encrypted_hash) → DES(RID)
 ///
-/// Decryption steps:
-///   1. RC4 key = MD5(PEK + key_material)
-///   2. RC4 decrypt the encrypted hash
-///   3. DES decrypt with RID-derived keys (same as SAM)
+///   - **Version 2** (AES-128-CBC, Server 2016+):
+///     `[version:2][_:2][header:4][salt:16][aes_encrypted_hash...]`
+///     Decrypt: AES-128-CBC(PEK, IV=salt, encrypted_hash) → DES(RID)
 ///
 /// Returns an empty Vec for empty/disabled hashes (blob too short).
 pub fn decrypt_ntds_hash(encrypted: &[u8], pek: &[u8], rid: u32) -> Result<Vec<u8>, CryptoError> {
     if encrypted.len() < 24 {
-        // Empty/disabled hash
+        return Ok(vec![]);
+    }
+
+    // Check per-hash encryption version (first 2 bytes)
+    let hash_version = u16::from_le_bytes([encrypted[0], encrypted[1]]);
+
+    let decrypted = match hash_version {
+        1 => decrypt_ntds_hash_v1(encrypted, pek)?,
+        2 => decrypt_ntds_hash_v2_aes(encrypted, pek)?,
+        _ => {
+            log::debug!("Unknown NTDS hash version {}, trying v1 (RC4)", hash_version);
+            decrypt_ntds_hash_v1(encrypted, pek)?
+        }
+    };
+
+    if decrypted.len() < 16 {
+        return Ok(vec![]);
+    }
+
+    // Final DES decryption with RID (same as SAM)
+    des_decrypt_hash(&decrypted, rid)
+}
+
+/// Version 1 (RC4) per-hash decryption.
+fn decrypt_ntds_hash_v1(encrypted: &[u8], pek: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    if encrypted.len() < 24 {
         return Ok(vec![]);
     }
 
@@ -268,12 +285,44 @@ pub fn decrypt_ntds_hash(encrypted: &[u8], pek: &[u8], rid: u32) -> Result<Vec<u
     let mut rc4: Rc4<U16> = Rc4KeyInit::new(rc4_key.as_slice().into());
     rc4.apply_keystream(&mut data);
 
-    if data.len() < 16 {
+    Ok(data)
+}
+
+/// Version 2 (AES-128-CBC) per-hash decryption (Server 2016+).
+fn decrypt_ntds_hash_v2_aes(encrypted: &[u8], pek: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    if encrypted.len() < 40 {
+        // Need at least: version(2) + padding(2) + header(4) + salt(16) + one AES block(16)
         return Ok(vec![]);
     }
 
-    // Final DES decryption with RID (same as SAM)
-    des_decrypt_hash(&data, rid)
+    let salt = &encrypted[8..24];
+    let enc_hash = &encrypted[24..];
+
+    // AES-128-CBC decrypt with PEK as key and salt as IV
+    if pek.len() < 16 {
+        return Err(CryptoError::InvalidData {
+            detail: "PEK too short for AES-128".into(),
+        });
+    }
+
+    // Ensure ciphertext is a multiple of 16 bytes (AES block size)
+    let aligned_len = (enc_hash.len() / 16) * 16;
+    if aligned_len == 0 {
+        return Ok(vec![]);
+    }
+
+    let mut buf = enc_hash[..aligned_len].to_vec();
+    let decryptor = cbc::Decryptor::<aes::Aes128>::new_from_slices(&pek[..16], salt)
+        .map_err(|e| CryptoError::InvalidData {
+            detail: format!("AES-128-CBC init: {}", e),
+        })?;
+    let decrypted = decryptor
+        .decrypt_padded_mut::<cbc::cipher::block_padding::NoPadding>(&mut buf)
+        .map_err(|e| CryptoError::InvalidData {
+            detail: format!("AES-128-CBC decrypt: {:?}", e),
+        })?;
+
+    Ok(decrypted.to_vec())
 }
 
 #[cfg(test)]
