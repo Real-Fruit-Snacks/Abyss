@@ -87,6 +87,14 @@ impl Extractor for CloudExtractor {
                 || path.ends_with(".zshrc")
             {
                 parse_shell_env_vars(text, path, &user, collector);
+            } else if path.ends_with(".git-credentials")
+                || path.ends_with(".config/git/credentials")
+            {
+                parse_git_credentials(text, path, &user, collector);
+            } else if path.ends_with(".npmrc") {
+                parse_npmrc(text, path, &user, collector);
+            } else if path == "var/run/secrets/kubernetes.io/serviceaccount/token" {
+                parse_k8s_service_account_token(text, path, &user, collector);
             }
         }
 
@@ -701,6 +709,99 @@ fn parse_shell_env_vars(text: &str, path: &str, user: &Option<String>, collector
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Git credentials
+// ---------------------------------------------------------------------------
+
+/// Parse `.git-credentials` file. Each line is a URL with embedded credentials:
+/// `https://user:ghp_xxxxxxxxxxxx@github.com`
+fn parse_git_credentials(text: &str, path: &str, user: &Option<String>, collector: &mut Collector) {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // Extract scheme://user:token@host
+        if let Some(at_pos) = line.rfind('@') {
+            let creds_part = &line[..at_pos];
+            let host = &line[at_pos + 1..];
+            // Find the last ':' before '@' to split user:token
+            if let Some(colon_pos) = creds_part.rfind(':') {
+                let token = &creds_part[colon_pos + 1..];
+                // Strip scheme://user prefix to get just the username
+                let user_part = &creds_part[..colon_pos];
+                let git_user = user_part.split("//").last().unwrap_or(user_part);
+                if !token.is_empty() {
+                    emit(
+                        "git",
+                        "credential",
+                        Some(format!("{}@{}", git_user, host)),
+                        token,
+                        path,
+                        user,
+                        collector,
+                    );
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// npmrc
+// ---------------------------------------------------------------------------
+
+/// Parse `.npmrc` for `_authToken=` entries.
+/// Example: `//registry.npmjs.org/:_authToken=npm_xxxxxxxxxxxx`
+fn parse_npmrc(text: &str, path: &str, user: &Option<String>, collector: &mut Collector) {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(token_pos) = line.find("_authToken=") {
+            let registry = &line[..token_pos];
+            let token = &line[token_pos + "_authToken=".len()..];
+            // Strip surrounding quotes if present
+            let token = token
+                .strip_prefix('"').and_then(|t| t.strip_suffix('"'))
+                .or_else(|| token.strip_prefix('\'').and_then(|t| t.strip_suffix('\'')))
+                .unwrap_or(token);
+            if !token.is_empty() {
+                emit(
+                    "npm",
+                    "auth_token",
+                    Some(registry.trim_end_matches('/').to_string()),
+                    token,
+                    path,
+                    user,
+                    collector,
+                );
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Kubernetes service account token
+// ---------------------------------------------------------------------------
+
+/// Parse a raw Kubernetes service account bearer token.
+fn parse_k8s_service_account_token(text: &str, path: &str, user: &Option<String>, collector: &mut Collector) {
+    let token = text.trim();
+    if !token.is_empty() {
+        emit(
+            "kubernetes",
+            "service_account_token",
+            None,
+            token,
+            path,
+            user,
+            collector,
+        );
     }
 }
 
