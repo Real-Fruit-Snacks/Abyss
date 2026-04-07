@@ -13,5 +13,6 @@ abyss-ntfs = { workspace = true }
 abyss-extfs = { workspace = true }
 abyss-registry = { workspace = true }
 abyss-output = { workspace = true }
+abyss-crypto = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }

@@ -16,6 +16,7 @@ abyss-volume = { workspace = true }
 abyss-ntfs = { workspace = true }
 abyss-extfs = { workspace = true }
 abyss-registry = { workspace = true }
+abyss-crypto = { workspace = true }
 abyss-target = { workspace = true }
 abyss-output = { workspace = true }
 clap = { workspace = true }

@@ -6,11 +6,14 @@ use abyss_container::raw::RawContainer;
 use abyss_container::traits::ContainerParser;
 use abyss_cstruct::read::ReadSeek;
 use abyss_ntfs::NtfsFilesystem;
+use abyss_output::collector::Collector;
 use abyss_output::finding::{FilesystemInfo, Finding, TargetInfoFinding, VolumeInfo};
 use abyss_volume::{discover_partitions, Partition};
 
 use crate::detect::OsType;
 use crate::error::TargetError;
+use crate::extractor::{ExtractionContext, Extractor};
+use crate::extractors::{CachedCredsExtractor, LsaExtractor, SamExtractor};
 
 /// Internal reader that provides Read+Seek access to a slice of a file.
 struct PartitionReader {
@@ -178,6 +181,33 @@ impl Target {
     /// Returns true if any filesystem was successfully opened.
     pub fn has_filesystem(&self) -> bool {
         self.ntfs.is_some()
+    }
+
+    /// Build the extraction context. For now, hives are not opened from disk
+    /// (full NTFS file reading is a future phase); the context starts empty.
+    fn build_extraction_context(&mut self) -> ExtractionContext {
+        ExtractionContext::new()
+    }
+
+    /// Run all compatible credential extractors and emit findings into `collector`.
+    pub fn extract(&mut self, collector: &mut Collector) {
+        let mut ctx = self.build_extraction_context();
+
+        let extractors: Vec<Box<dyn Extractor>> = vec![
+            Box::new(SamExtractor),
+            Box::new(LsaExtractor),
+            Box::new(CachedCredsExtractor),
+        ];
+
+        for extractor in &extractors {
+            if extractor.is_compatible(&ctx) {
+                if let Err(e) = extractor.extract(&mut ctx, collector) {
+                    log::warn!("{} extractor failed: {}", extractor.name(), e);
+                }
+            } else {
+                log::debug!("{} extractor: prerequisites not met, skipping", extractor.name());
+            }
+        }
     }
 
     /// Generates a TargetInfo finding with volume and filesystem details.
