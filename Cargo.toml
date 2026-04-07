@@ -13,6 +13,7 @@ members = [
     "crates/abyss-crypto",
     "crates/abyss-browser",
     "crates/abyss-ese",
+    "crates/abyss-memory",
 ]
 
 [workspace.package]
@@ -34,6 +35,7 @@ abyss-output = { path = "crates/abyss-output" }
 abyss-crypto = { path = "crates/abyss-crypto" }
 abyss-browser = { path = "crates/abyss-browser" }
 abyss-ese = { path = "crates/abyss-ese" }
+abyss-memory = { path = "crates/abyss-memory" }
 
 # External crates
 thiserror = "2"

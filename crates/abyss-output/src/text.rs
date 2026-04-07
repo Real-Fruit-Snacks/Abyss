@@ -170,6 +170,38 @@ pub fn emit_text(findings: &[Finding], writer: &mut dyn Write) -> Result<(), Out
                     status
                 )?;
             }
+            Finding::CloudCredential(c) => {
+                let user_str = c.user.as_deref().unwrap_or("");
+                let id_str = c.identifier.as_deref().unwrap_or("");
+                writeln!(
+                    writer,
+                    "{} {}/{}: {} ({}) from {}",
+                    "[CLOUD]".bold().magenta(),
+                    c.provider,
+                    c.credential_type,
+                    id_str,
+                    user_str,
+                    c.source_path
+                )?;
+            }
+            Finding::MemoryCredential(m) => {
+                let hash_str = m.nt_hash.as_deref().unwrap_or("(none)");
+                let pass_str = m.password.as_deref().unwrap_or("");
+                writeln!(
+                    writer,
+                    "{} [{}] {}\\{} nt={} {}",
+                    "[MEMORY]".bold().red(),
+                    m.provider,
+                    m.domain,
+                    m.username,
+                    hash_str,
+                    if pass_str.is_empty() {
+                        String::new()
+                    } else {
+                        format!("pass={}", pass_str)
+                    }
+                )?;
+            }
         }
     }
     Ok(())

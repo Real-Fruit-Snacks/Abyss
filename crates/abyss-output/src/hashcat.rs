@@ -36,6 +36,16 @@ pub fn emit_hashcat(findings: &[Finding], writer: &mut dyn Write) -> Result<(), 
                     h.domain, h.username, h.rid, h.lm_hash, h.nt_hash
                 )?;
             }
+            Finding::MemoryCredential(m) => {
+                // Mode 1000: NT hash
+                if let Some(ref nt_hash) = m.nt_hash {
+                    writeln!(
+                        writer,
+                        "{}\\{}:::{}:::",
+                        m.domain, m.username, nt_hash
+                    )?;
+                }
+            }
             _ => {}
         }
     }

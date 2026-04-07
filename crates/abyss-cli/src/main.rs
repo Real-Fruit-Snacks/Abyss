@@ -1,5 +1,6 @@
 mod image;
 mod info;
+mod memory;
 mod shell;
 
 use abyss_output::collector::OutputFormat;
@@ -59,6 +60,12 @@ enum Commands {
         path: String,
     },
 
+    /// Analyze a memory dump and extract credentials
+    Memory {
+        /// Path to memory dump
+        path: String,
+    },
+
     /// Interactive filesystem shell
     Shell {
         /// Path to disk image
@@ -94,6 +101,9 @@ fn main() {
     let exit_code = match cli.command {
         Commands::Image { ref path, creds, keys, persist, all } => {
             image::run(path, creds, keys, persist, all, output_format)
+        }
+        Commands::Memory { ref path } => {
+            memory::run(path, output_format)
         }
         Commands::Info { ref path } => {
             info::run(path, output_format)

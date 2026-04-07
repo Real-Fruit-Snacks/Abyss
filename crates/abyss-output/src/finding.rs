@@ -17,6 +17,8 @@ pub enum Finding {
     ServiceCredential(ServiceCredentialFinding),
     PersistenceEntry(PersistenceEntryFinding),
     NtdsHash(NtdsHashFinding),
+    CloudCredential(CloudCredentialFinding),
+    MemoryCredential(MemoryCredentialFinding),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -113,6 +115,25 @@ pub struct NtdsHashFinding {
     pub enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct CloudCredentialFinding {
+    pub provider: String,
+    pub credential_type: String,
+    pub identifier: Option<String>,
+    pub secret_preview: String,
+    pub source_path: String,
+    pub user: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryCredentialFinding {
+    pub provider: String,
+    pub domain: String,
+    pub username: String,
+    pub password: Option<String>,
+    pub nt_hash: Option<String>,
+}
+
 /// Encode a byte slice as a lowercase hex string.
 pub fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
@@ -161,6 +182,8 @@ impl Finding {
             Finding::ServiceCredential(_) => "service_credential",
             Finding::PersistenceEntry(_) => "persistence_entry",
             Finding::NtdsHash(_) => "ntds_hash",
+            Finding::CloudCredential(_) => "cloud_credential",
+            Finding::MemoryCredential(_) => "memory_credential",
         }
     }
 }

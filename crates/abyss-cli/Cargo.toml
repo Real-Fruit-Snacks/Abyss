@@ -19,6 +19,7 @@ abyss-registry = { workspace = true }
 abyss-crypto = { workspace = true }
 abyss-target = { workspace = true }
 abyss-output = { workspace = true }
+abyss-memory = { workspace = true }
 clap = { workspace = true }
 colored = { workspace = true }
 rustyline = { workspace = true }
