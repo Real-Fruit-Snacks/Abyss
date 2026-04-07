@@ -1,3 +1,6 @@
+mod image;
+mod info;
+
 use abyss_output::collector::OutputFormat;
 use clap::{Parser, Subcommand};
 
@@ -87,15 +90,11 @@ fn main() {
     };
 
     let exit_code = match cli.command {
-        Commands::Image { ref path, .. } => {
-            eprintln!("abyss image: not yet implemented (target: {})", path);
-            let _ = output_format;
-            2
+        Commands::Image { ref path, creds, keys, persist, all } => {
+            image::run(path, creds, keys, persist, all, output_format)
         }
         Commands::Info { ref path } => {
-            eprintln!("abyss info: not yet implemented (target: {})", path);
-            let _ = output_format;
-            2
+            info::run(path, output_format)
         }
         Commands::Shell { ref path } => {
             eprintln!("abyss shell: not yet implemented (target: {})", path);

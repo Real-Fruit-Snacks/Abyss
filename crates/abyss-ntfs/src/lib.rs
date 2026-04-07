@@ -4,7 +4,11 @@
 
 pub mod attribute;
 pub mod boot;
+pub mod datarun;
 pub mod error;
+pub mod index;
 pub mod mft;
+pub mod ntfs;
 
 pub use error::NtfsError;
+pub use ntfs::NtfsFilesystem;

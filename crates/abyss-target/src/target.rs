@@ -1,0 +1,217 @@
+use std::fs::File;
+use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::path::Path;
+
+use abyss_container::raw::RawContainer;
+use abyss_container::traits::ContainerParser;
+use abyss_cstruct::read::ReadSeek;
+use abyss_ntfs::NtfsFilesystem;
+use abyss_output::finding::{FilesystemInfo, Finding, TargetInfoFinding, VolumeInfo};
+use abyss_volume::{discover_partitions, Partition};
+
+use crate::detect::OsType;
+use crate::error::TargetError;
+
+/// Internal reader that provides Read+Seek access to a slice of a file.
+struct PartitionReader {
+    inner: BufReader<File>,
+    base_offset: u64,
+    size: u64,
+    position: u64,
+}
+
+impl PartitionReader {
+    fn new(file: File, base_offset: u64, size: u64) -> Self {
+        Self {
+            inner: BufReader::new(file),
+            base_offset,
+            size,
+            position: 0,
+        }
+    }
+}
+
+impl Read for PartitionReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let remaining = self.size.saturating_sub(self.position);
+        if remaining == 0 {
+            return Ok(0);
+        }
+        let max = buf.len().min(remaining as usize);
+        let n = self.inner.read(&mut buf[..max])?;
+        self.position += n as u64;
+        Ok(n)
+    }
+}
+
+impl Seek for PartitionReader {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        let new_pos = match pos {
+            SeekFrom::Start(offset) => offset,
+            SeekFrom::End(offset) => {
+                (self.size as i64 + offset).max(0) as u64
+            }
+            SeekFrom::Current(offset) => {
+                (self.position as i64 + offset).max(0) as u64
+            }
+        };
+        let clamped = new_pos.min(self.size);
+        self.inner.seek(SeekFrom::Start(self.base_offset + clamped))?;
+        self.position = clamped;
+        Ok(clamped)
+    }
+}
+
+/// Opened target disk image with OS detection and filesystem discovery.
+pub struct Target {
+    pub os: OsType,
+    pub hostname: Option<String>,
+    pub version: Option<String>,
+    pub domain: Option<String>,
+    pub partitions: Vec<Partition>,
+    pub ntfs: Option<NtfsFilesystem>,
+}
+
+impl Target {
+    /// Open a disk image at `path`, discover partitions, and probe filesystems.
+    pub fn open(path: &Path) -> Result<Self, TargetError> {
+        let file = File::open(path).map_err(|e| TargetError::OpenFailed {
+            detail: e.to_string(),
+        })?;
+
+        // Wrap in RawContainer via ContainerParser
+        let reader: Box<dyn ReadSeek> = Box::new(BufReader::new(
+            File::open(path).map_err(|e| TargetError::OpenFailed {
+                detail: e.to_string(),
+            })?,
+        ));
+        let mut _container = RawContainer::open(reader)?;
+
+        // Open a fresh reader for partition discovery
+        let mut disc_reader = BufReader::new(
+            File::open(path).map_err(|e| TargetError::OpenFailed {
+                detail: e.to_string(),
+            })?,
+        );
+
+        let partitions = match discover_partitions(&mut disc_reader, 512u64) {
+            Ok(parts) => parts,
+            Err(_) => Vec::new(),
+        };
+
+        let mut os = OsType::Unknown;
+        let mut ntfs: Option<NtfsFilesystem> = None;
+
+        if partitions.is_empty() {
+            // Try treating the whole image as a filesystem
+            let part_file = File::open(path).map_err(|e| TargetError::OpenFailed {
+                detail: e.to_string(),
+            })?;
+            let size = part_file.metadata().map(|m| m.len()).unwrap_or(0);
+            let mut part_reader: Box<dyn ReadSeek> =
+                Box::new(PartitionReader::new(part_file, 0, size));
+            if NtfsFilesystem::probe(&mut part_reader) {
+                // Re-open for actual open
+                let part_file2 = File::open(path).map_err(|e| TargetError::OpenFailed {
+                    detail: e.to_string(),
+                })?;
+                let size2 = part_file2.metadata().map(|m| m.len()).unwrap_or(0);
+                let reader2: Box<dyn ReadSeek> =
+                    Box::new(PartitionReader::new(part_file2, 0, size2));
+                match NtfsFilesystem::open(reader2) {
+                    Ok(fs) => {
+                        os = OsType::Windows;
+                        ntfs = Some(fs);
+                    }
+                    Err(e) => {
+                        log::debug!("NTFS open failed on whole image: {}", e);
+                    }
+                }
+            }
+        } else {
+            for partition in &partitions {
+                let part_file = File::open(path).map_err(|e| TargetError::OpenFailed {
+                    detail: e.to_string(),
+                })?;
+                let mut part_reader: Box<dyn ReadSeek> = Box::new(PartitionReader::new(
+                    part_file,
+                    partition.offset,
+                    partition.size,
+                ));
+                if NtfsFilesystem::probe(&mut part_reader) {
+                    // Re-open for actual open
+                    let part_file2 = File::open(path).map_err(|e| TargetError::OpenFailed {
+                        detail: e.to_string(),
+                    })?;
+                    let reader2: Box<dyn ReadSeek> = Box::new(PartitionReader::new(
+                        part_file2,
+                        partition.offset,
+                        partition.size,
+                    ));
+                    match NtfsFilesystem::open(reader2) {
+                        Ok(fs) => {
+                            os = OsType::Windows;
+                            ntfs = Some(fs);
+                            break;
+                        }
+                        Err(e) => {
+                            log::debug!("NTFS open failed on partition {}: {}", partition.index, e);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Suppress unused variable warning — file is opened above for size
+        let _ = file;
+
+        Ok(Target {
+            os,
+            hostname: None,
+            version: None,
+            domain: None,
+            partitions,
+            ntfs,
+        })
+    }
+
+    /// Returns true if any filesystem was successfully opened.
+    pub fn has_filesystem(&self) -> bool {
+        self.ntfs.is_some()
+    }
+
+    /// Generates a TargetInfo finding with volume and filesystem details.
+    pub fn info(&self) -> Finding {
+        let volumes: Vec<VolumeInfo> = self
+            .partitions
+            .iter()
+            .map(|p| VolumeInfo {
+                index: p.index,
+                partition_type: p.partition_type.clone(),
+                offset: p.offset,
+                size: p.size,
+                label: p.label.clone(),
+            })
+            .collect();
+
+        let mut filesystems: Vec<FilesystemInfo> = Vec::new();
+        if let Some(ntfs) = &self.ntfs {
+            filesystems.push(FilesystemInfo {
+                fs_type: "NTFS".to_string(),
+                label: None,
+                total_size: ntfs.volume_size(),
+                mount_point: None,
+            });
+        }
+
+        Finding::TargetInfo(TargetInfoFinding {
+            os: self.os.to_string(),
+            hostname: self.hostname.clone(),
+            version: self.version.clone(),
+            architecture: None,
+            domain: self.domain.clone(),
+            volumes,
+            filesystems,
+        })
+    }
+}
