@@ -168,7 +168,7 @@ impl Target {
                         if os == OsType::Unknown { os = OsType::Windows; }
                         ntfs_filesystems.push(fs);
                     }
-                    Err(e) => log::debug!("NTFS open failed on whole image: {}", e),
+                    Err(e) => log::warn!("NTFS open failed on whole image: {}", e),
                 }
             }
             // Try ext on whole image (independent of NTFS result)
@@ -182,7 +182,7 @@ impl Target {
                         if os == OsType::Unknown { os = OsType::Linux; }
                         extfs_filesystems.push(fs);
                     }
-                    Err(e) => log::debug!("ext open failed on whole image: {}", e),
+                    Err(e) => log::warn!("ext open failed on whole image: {}", e),
                 }
             }
         } else {
@@ -200,7 +200,7 @@ impl Target {
                             if os == OsType::Unknown { os = OsType::Windows; }
                             ntfs_filesystems.push(fs);
                         }
-                        Err(e) => log::debug!("NTFS open failed on partition {}: {}", partition.index, e),
+                        Err(e) => log::warn!("NTFS open failed on partition {}: {}", partition.index, e),
                     }
                 } else {
                     let mut probe_reader: Box<dyn ReadSeek> = Box::new(SliceReader::new(
@@ -215,7 +215,7 @@ impl Target {
                                 if os == OsType::Unknown { os = OsType::Linux; }
                                 extfs_filesystems.push(fs);
                             }
-                            Err(e) => log::debug!("ext open failed on partition {}: {}", partition.index, e),
+                            Err(e) => log::warn!("ext open failed on partition {}: {}", partition.index, e),
                         }
                     }
                 }
@@ -1133,12 +1133,20 @@ impl Target {
                 log::debug!("{} extractor: skipped by filter", extractor.name());
                 continue;
             }
-            if extractor.is_compatible(&ctx) {
-                if let Err(e) = extractor.extract(&mut ctx, collector) {
-                    log::warn!("{} extractor failed: {}", extractor.name(), e);
-                }
-            } else {
+            if !extractor.is_compatible(&ctx) {
                 log::debug!("{} extractor: prerequisites not met, skipping", extractor.name());
+                continue;
+            }
+            let name = extractor.name();
+            // Safety: we use AssertUnwindSafe because extractors may not be
+            // UnwindSafe, but we accept that risk to keep the pipeline alive.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                extractor.extract(&mut ctx, collector)
+            }));
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => log::warn!("{} extractor failed: {}", name, e),
+                Err(_) => log::error!("{} extractor panicked! Continuing with remaining extractors.", name),
             }
         }
     }

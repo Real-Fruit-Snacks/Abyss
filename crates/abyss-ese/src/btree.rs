@@ -20,8 +20,20 @@ impl EseDatabase {
         let mut stack = vec![root_page];
 
         while let Some(page_num) = stack.pop() {
-            let page_buf = self.read_page(page_num)?;
-            let header = self.parse_page_header(&page_buf)?;
+            let page_buf = match self.read_page(page_num) {
+                Ok(buf) => buf,
+                Err(e) => {
+                    log::warn!("ESE: skipping corrupt page {}: {}", page_num, e);
+                    continue;
+                }
+            };
+            let header = match self.parse_page_header(&page_buf) {
+                Ok(h) => h,
+                Err(e) => {
+                    log::warn!("ESE: skipping page {} with bad header: {}", page_num, e);
+                    continue;
+                }
+            };
             let tags = self.parse_page_tags(&page_buf);
 
             // Skip empty or space-tree pages
