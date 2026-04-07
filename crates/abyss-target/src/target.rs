@@ -2,9 +2,9 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use abyss_container::raw::RawContainer;
-use abyss_container::traits::ContainerParser;
+use abyss_container::detect_and_open;
 use abyss_cstruct::read::ReadSeek;
+use abyss_extfs::ExtFilesystem;
 use abyss_ntfs::NtfsFilesystem;
 use abyss_output::collector::Collector;
 use abyss_output::finding::{FilesystemInfo, Finding, TargetInfoFinding, VolumeInfo};
@@ -73,22 +73,19 @@ pub struct Target {
     pub domain: Option<String>,
     pub partitions: Vec<Partition>,
     pub ntfs: Option<NtfsFilesystem>,
+    pub extfs: Option<ExtFilesystem>,
 }
 
 impl Target {
     /// Open a disk image at `path`, discover partitions, and probe filesystems.
     pub fn open(path: &Path) -> Result<Self, TargetError> {
-        let file = File::open(path).map_err(|e| TargetError::OpenFailed {
-            detail: e.to_string(),
-        })?;
-
-        // Wrap in RawContainer via ContainerParser
-        let reader: Box<dyn ReadSeek> = Box::new(BufReader::new(
+        // Auto-detect container format (E01, VMDK, or raw fallback)
+        let container_reader: Box<dyn ReadSeek> = Box::new(BufReader::new(
             File::open(path).map_err(|e| TargetError::OpenFailed {
                 detail: e.to_string(),
             })?,
         ));
-        let mut _container = RawContainer::open(reader)?;
+        let _container = detect_and_open(container_reader)?;
 
         // Open a fresh reader for partition discovery
         let mut disc_reader = BufReader::new(
@@ -104,6 +101,7 @@ impl Target {
 
         let mut os = OsType::Unknown;
         let mut ntfs: Option<NtfsFilesystem> = None;
+        let mut extfs: Option<ExtFilesystem> = None;
 
         if partitions.is_empty() {
             // Try treating the whole image as a filesystem
@@ -114,7 +112,6 @@ impl Target {
             let mut part_reader: Box<dyn ReadSeek> =
                 Box::new(PartitionReader::new(part_file, 0, size));
             if NtfsFilesystem::probe(&mut part_reader) {
-                // Re-open for actual open
                 let part_file2 = File::open(path).map_err(|e| TargetError::OpenFailed {
                     detail: e.to_string(),
                 })?;
@@ -131,6 +128,32 @@ impl Target {
                     }
                 }
             }
+            // Try ext2/3/4 if NTFS didn't match
+            if ntfs.is_none() {
+                let part_file = File::open(path).map_err(|e| TargetError::OpenFailed {
+                    detail: e.to_string(),
+                })?;
+                let size = part_file.metadata().map(|m| m.len()).unwrap_or(0);
+                let mut part_reader: Box<dyn ReadSeek> =
+                    Box::new(PartitionReader::new(part_file, 0, size));
+                if ExtFilesystem::probe(&mut part_reader) {
+                    let part_file2 = File::open(path).map_err(|e| TargetError::OpenFailed {
+                        detail: e.to_string(),
+                    })?;
+                    let size2 = part_file2.metadata().map(|m| m.len()).unwrap_or(0);
+                    let reader2: Box<dyn ReadSeek> =
+                        Box::new(PartitionReader::new(part_file2, 0, size2));
+                    match ExtFilesystem::open(reader2) {
+                        Ok(fs) => {
+                            os = OsType::Linux;
+                            extfs = Some(fs);
+                        }
+                        Err(e) => {
+                            log::debug!("ext open failed on whole image: {}", e);
+                        }
+                    }
+                }
+            }
         } else {
             for partition in &partitions {
                 let part_file = File::open(path).map_err(|e| TargetError::OpenFailed {
@@ -142,7 +165,6 @@ impl Target {
                     partition.size,
                 ));
                 if NtfsFilesystem::probe(&mut part_reader) {
-                    // Re-open for actual open
                     let part_file2 = File::open(path).map_err(|e| TargetError::OpenFailed {
                         detail: e.to_string(),
                     })?;
@@ -163,10 +185,40 @@ impl Target {
                     }
                 }
             }
+            // Try ext2/3/4 on partitions if NTFS wasn't found
+            if ntfs.is_none() {
+                for partition in &partitions {
+                    let part_file = File::open(path).map_err(|e| TargetError::OpenFailed {
+                        detail: e.to_string(),
+                    })?;
+                    let mut part_reader: Box<dyn ReadSeek> = Box::new(PartitionReader::new(
+                        part_file,
+                        partition.offset,
+                        partition.size,
+                    ));
+                    if ExtFilesystem::probe(&mut part_reader) {
+                        let part_file2 = File::open(path).map_err(|e| TargetError::OpenFailed {
+                            detail: e.to_string(),
+                        })?;
+                        let reader2: Box<dyn ReadSeek> = Box::new(PartitionReader::new(
+                            part_file2,
+                            partition.offset,
+                            partition.size,
+                        ));
+                        match ExtFilesystem::open(reader2) {
+                            Ok(fs) => {
+                                os = OsType::Linux;
+                                extfs = Some(fs);
+                                break;
+                            }
+                            Err(e) => {
+                                log::debug!("ext open failed on partition {}: {}", partition.index, e);
+                            }
+                        }
+                    }
+                }
+            }
         }
-
-        // Suppress unused variable warning — file is opened above for size
-        let _ = file;
 
         Ok(Target {
             os,
@@ -175,17 +227,73 @@ impl Target {
             domain: None,
             partitions,
             ntfs,
+            extfs,
         })
     }
 
     /// Returns true if any filesystem was successfully opened.
     pub fn has_filesystem(&self) -> bool {
-        self.ntfs.is_some()
+        self.ntfs.is_some() || self.extfs.is_some()
     }
 
-    /// Build the extraction context by loading registry hives from the NTFS filesystem.
+    /// Returns the filesystem type name if one is open.
+    pub fn filesystem_type(&self) -> Option<&'static str> {
+        if self.ntfs.is_some() {
+            Some("NTFS")
+        } else if self.extfs.is_some() {
+            Some("ext")
+        } else {
+            None
+        }
+    }
+
+    /// Read a file by path from whichever filesystem is available.
+    pub fn read_file(&mut self, path: &str) -> Result<Vec<u8>, TargetError> {
+        if let Some(ref mut ntfs) = self.ntfs {
+            Ok(ntfs.read_file(path)?)
+        } else if let Some(ref mut extfs) = self.extfs {
+            Ok(extfs.read_file(path)?)
+        } else {
+            Err(TargetError::NoFilesystem)
+        }
+    }
+
+    /// List directory contents from whichever filesystem is available.
+    /// Returns Vec of (name, is_directory, id).
+    pub fn list_directory_by_path(&mut self, path: &str) -> Result<Vec<(String, bool, u64)>, TargetError> {
+        if let Some(ref mut ntfs) = self.ntfs {
+            let dir_index = if path == "/" || path.is_empty() {
+                5u64 // NTFS root
+            } else {
+                ntfs.find_file(path)?
+            };
+            Ok(ntfs.list_directory(dir_index)?)
+        } else if let Some(ref mut extfs) = self.extfs {
+            let (ino, _inode) = if path == "/" || path.is_empty() {
+                let inode = extfs.read_inode(2)?;
+                (2u64, inode)
+            } else {
+                extfs.find_file(path)?
+            };
+            let entries = extfs.list_directory(ino)?;
+            Ok(entries
+                .into_iter()
+                .filter(|e| e.name != "." && e.name != "..")
+                .map(|e| (e.name, e.file_type == abyss_extfs::dir::ExtFileType::Directory, e.inode as u64))
+                .collect())
+        } else {
+            Err(TargetError::NoFilesystem)
+        }
+    }
+
+    /// Build the extraction context by loading registry hives and credential files.
     fn build_extraction_context(&mut self) -> Result<ExtractionContext, TargetError> {
         let mut ctx = ExtractionContext::new();
+
+        // Build Linux extraction context from extfs
+        if self.os == OsType::Linux {
+            return self.build_linux_extraction_context(ctx);
+        }
 
         if self.os != OsType::Windows {
             return Ok(ctx);
@@ -343,6 +451,109 @@ impl Target {
         Ok(ctx)
     }
 
+    /// Build extraction context for Linux targets using extfs.
+    fn build_linux_extraction_context(&mut self, mut ctx: ExtractionContext) -> Result<ExtractionContext, TargetError> {
+        let extfs = match self.extfs.as_mut() {
+            Some(fs) => fs,
+            None => return Ok(ctx),
+        };
+
+        // Discover users from home/ directory
+        if let Ok(entries) = extfs.list_directory(2) {
+            // Look for "home" in root
+            for entry in &entries {
+                if entry.name == "home" && entry.file_type == abyss_extfs::dir::ExtFileType::Directory {
+                    if let Ok(home_entries) = extfs.list_directory(entry.inode as u64) {
+                        for he in home_entries {
+                            if !he.name.is_empty() && he.name != "." && he.name != ".." && he.file_type == abyss_extfs::dir::ExtFileType::Directory {
+                                if !ctx.discovered_users.contains(&he.name) {
+                                    ctx.discovered_users.push(he.name);
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+
+        let candidate_users: Vec<String> = {
+            let mut v = ctx.discovered_users.clone();
+            for common in &["root", "ubuntu", "ec2-user", "admin", "user"] {
+                let s = common.to_string();
+                if !v.contains(&s) {
+                    v.push(s);
+                }
+            }
+            v
+        };
+
+        // SSH keys
+        for user in &candidate_users {
+            let prefixes: Vec<String> = if user == "root" {
+                vec!["root/.ssh".to_string(), "home/root/.ssh".to_string()]
+            } else {
+                vec![format!("home/{}/.ssh", user)]
+            };
+            for prefix in &prefixes {
+                for key_name in &["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", "authorized_keys"] {
+                    let path = format!("{}/{}", prefix, key_name);
+                    if let Ok(data) = extfs.read_file(&path) {
+                        ctx.filesystem_files.insert(path, data);
+                    }
+                }
+            }
+        }
+
+        // SSH host keys
+        for host_key in &["ssh_host_rsa_key", "ssh_host_ed25519_key", "ssh_host_ecdsa_key"] {
+            let path = format!("etc/ssh/{}", host_key);
+            if let Ok(data) = extfs.read_file(&path) {
+                ctx.filesystem_files.insert(path, data);
+            }
+        }
+
+        // Linux credential files
+        let linux_paths = [
+            "etc/shadow", "etc/passwd",
+            "root/.aws/credentials", "root/.git-credentials",
+            "root/.netrc", "root/.docker/config.json", "root/.vnc/passwd",
+        ];
+        for path in &linux_paths {
+            if let Ok(data) = extfs.read_file(path) {
+                ctx.filesystem_files.insert(path.to_string(), data);
+            }
+        }
+
+        // Per-user service files
+        let user_rel_paths = [".aws/credentials", ".git-credentials", ".netrc", ".docker/config.json"];
+        for user in &candidate_users {
+            let home = if user == "root" { "root".to_string() } else { format!("home/{}", user) };
+            for rel in &user_rel_paths {
+                let full = format!("{}/{}", home, rel);
+                if let Ok(data) = extfs.read_file(&full) {
+                    ctx.filesystem_files.insert(full, data);
+                }
+            }
+        }
+
+        // WireGuard configs
+        if let Ok((_ino, _inode)) = extfs.find_file("etc/wireguard") {
+            if let Ok(entries) = extfs.list_directory(_ino) {
+                for entry in entries {
+                    if entry.name.ends_with(".conf") {
+                        let path = format!("etc/wireguard/{}", entry.name);
+                        if let Ok(data) = extfs.read_file(&path) {
+                            ctx.filesystem_files.insert(path, data);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(ctx)
+    }
+
     /// Run all compatible credential extractors and emit findings into `collector`.
     pub fn extract(&mut self, collector: &mut Collector) {
         let mut ctx = match self.build_extraction_context() {
@@ -395,6 +606,14 @@ impl Target {
                 fs_type: "NTFS".to_string(),
                 label: None,
                 total_size: ntfs.volume_size(),
+                mount_point: None,
+            });
+        }
+        if let Some(extfs) = &self.extfs {
+            filesystems.push(FilesystemInfo {
+                fs_type: "ext".to_string(),
+                label: None,
+                total_size: extfs.volume_size(),
                 mount_point: None,
             });
         }

@@ -11,6 +11,9 @@ pub enum ExtfsError {
     #[error("invalid inode {inode}")]
     InvalidInode { inode: u64 },
 
+    #[error("block out of range: {block}")]
+    BlockOutOfRange { block: u64 },
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 

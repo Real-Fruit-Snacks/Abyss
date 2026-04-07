@@ -99,7 +99,7 @@ fn cmd_info(target: &Target) -> ShellResult {
     ));
     out.push_str(&format!(
         "Filesystem: {}\n",
-        if target.has_filesystem() { "NTFS" } else { "none" }
+        target.filesystem_type().unwrap_or("none")
     ));
     ShellResult::Output(out)
 }
@@ -129,22 +129,11 @@ fn cmd_volumes(target: &Target) -> ShellResult {
 }
 
 fn cmd_ls(target: &mut Target, path: &str) -> ShellResult {
-    let ntfs = match target.ntfs.as_mut() {
-        Some(fs) => fs,
-        None => return ShellResult::Error("No filesystem available.".to_string()),
-    };
+    if !target.has_filesystem() {
+        return ShellResult::Error("No filesystem available.".to_string());
+    }
 
-    // Resolve directory MFT index
-    let dir_index = if path == "/" || path.is_empty() {
-        5u64 // NTFS root
-    } else {
-        match ntfs.find_file(path) {
-            Ok(idx) => idx,
-            Err(e) => return ShellResult::Error(format!("ls: {}: {}", path, e)),
-        }
-    };
-
-    match ntfs.list_directory(dir_index) {
+    match target.list_directory_by_path(path) {
         Ok(entries) => {
             if entries.is_empty() {
                 return ShellResult::Output("(empty directory)".to_string());
@@ -164,12 +153,11 @@ fn cmd_ls(target: &mut Target, path: &str) -> ShellResult {
 }
 
 fn cmd_cat(target: &mut Target, path: &str) -> ShellResult {
-    let ntfs = match target.ntfs.as_mut() {
-        Some(fs) => fs,
-        None => return ShellResult::Error("No filesystem available.".to_string()),
-    };
+    if !target.has_filesystem() {
+        return ShellResult::Error("No filesystem available.".to_string());
+    }
 
-    match ntfs.read_file(path) {
+    match target.read_file(path) {
         Ok(data) => match std::str::from_utf8(&data) {
             Ok(text) => ShellResult::Output(text.to_string()),
             Err(_) => ShellResult::Error(format!(
@@ -182,12 +170,11 @@ fn cmd_cat(target: &mut Target, path: &str) -> ShellResult {
 }
 
 fn cmd_hexdump(target: &mut Target, path: &str) -> ShellResult {
-    let ntfs = match target.ntfs.as_mut() {
-        Some(fs) => fs,
-        None => return ShellResult::Error("No filesystem available.".to_string()),
-    };
+    if !target.has_filesystem() {
+        return ShellResult::Error("No filesystem available.".to_string());
+    }
 
-    let data = match ntfs.read_file(path) {
+    let data = match target.read_file(path) {
         Ok(d) => d,
         Err(e) => return ShellResult::Error(format!("hexdump: {}: {}", path, e)),
     };
@@ -226,12 +213,11 @@ fn cmd_hexdump(target: &mut Target, path: &str) -> ShellResult {
 }
 
 fn cmd_hash(target: &mut Target, path: &str) -> ShellResult {
-    let ntfs = match target.ntfs.as_mut() {
-        Some(fs) => fs,
-        None => return ShellResult::Error("No filesystem available.".to_string()),
-    };
+    if !target.has_filesystem() {
+        return ShellResult::Error("No filesystem available.".to_string());
+    }
 
-    let data = match ntfs.read_file(path) {
+    let data = match target.read_file(path) {
         Ok(d) => d,
         Err(e) => return ShellResult::Error(format!("hash: {}: {}", path, e)),
     };
@@ -252,12 +238,11 @@ fn cmd_hash(target: &mut Target, path: &str) -> ShellResult {
 }
 
 fn cmd_save(target: &mut Target, src: &str, dst: &str) -> ShellResult {
-    let ntfs = match target.ntfs.as_mut() {
-        Some(fs) => fs,
-        None => return ShellResult::Error("No filesystem available.".to_string()),
-    };
+    if !target.has_filesystem() {
+        return ShellResult::Error("No filesystem available.".to_string());
+    }
 
-    let data = match ntfs.read_file(src) {
+    let data = match target.read_file(src) {
         Ok(d) => d,
         Err(e) => return ShellResult::Error(format!("save: {}: {}", src, e)),
     };

@@ -8,3 +8,4 @@ description = "Disk image container parsers for Abyss"
 [dependencies]
 abyss-cstruct = { workspace = true }
 thiserror = { workspace = true }
+flate2 = { workspace = true }
