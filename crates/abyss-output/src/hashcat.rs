@@ -28,6 +28,14 @@ pub fn emit_hashcat(findings: &[Finding], writer: &mut dyn Write) -> Result<(), 
                 // hashcat auto-detects mode from the hash prefix ($6$, $5$, $1$, etc.)
                 writeln!(writer, "{}", s.hash)?;
             }
+            Finding::NtdsHash(h) => {
+                // Mode 1000: domain\username:rid:lm_hash:nt_hash:::
+                writeln!(
+                    writer,
+                    "{}\\{}:{}:{}:{}:::",
+                    h.domain, h.username, h.rid, h.lm_hash, h.nt_hash
+                )?;
+            }
             _ => {}
         }
     }

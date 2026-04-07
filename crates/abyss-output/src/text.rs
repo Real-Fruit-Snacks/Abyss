@@ -156,6 +156,20 @@ pub fn emit_text(findings: &[Finding], writer: &mut dyn Write) -> Result<(), Out
                     "[PERSIST]".bold().yellow(),
                     p.mechanism, p.name, p.path, p.trigger, p.user_context)?;
             }
+            Finding::NtdsHash(h) => {
+                let status = if h.enabled { "active" } else { "disabled" };
+                writeln!(
+                    writer,
+                    "{} {}\\{}:{} nt={} lm={} ({})",
+                    "[NTDS]".bold().yellow(),
+                    h.domain,
+                    h.username,
+                    h.rid,
+                    h.nt_hash,
+                    h.lm_hash,
+                    status
+                )?;
+            }
         }
     }
     Ok(())

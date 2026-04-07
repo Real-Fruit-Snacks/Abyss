@@ -361,7 +361,7 @@ fn rc4_decrypt_hash(
 /// The RID is expanded into two 7-byte DES keys using `rid_to_key`.
 /// The hash is split into two 8-byte blocks, each decrypted with the
 /// corresponding DES key.
-fn des_decrypt_hash(hash: &[u8], rid: u32) -> Result<Vec<u8>, CryptoError> {
+pub fn des_decrypt_hash(hash: &[u8], rid: u32) -> Result<Vec<u8>, CryptoError> {
     if hash.len() < 16 {
         return Err(CryptoError::BufferTooSmall {
             need: 16,
@@ -392,7 +392,7 @@ fn des_decrypt_hash(hash: &[u8], rid: u32) -> Result<Vec<u8>, CryptoError> {
 ///
 /// Classic algorithm: the RID bytes are scattered into 56-bit key slots via
 /// bit manipulation, producing two 8-byte keys with odd parity bits.
-fn rid_to_des_keys(rid: u32) -> ([u8; 8], [u8; 8]) {
+pub fn rid_to_des_keys(rid: u32) -> ([u8; 8], [u8; 8]) {
     let r = rid.to_le_bytes(); // [b0, b1, b2, b3]
 
     // Key 1 uses bytes: r[0] r[1] r[2] r[3] r[0] r[1] r[2]

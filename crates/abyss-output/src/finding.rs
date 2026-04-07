@@ -16,6 +16,7 @@ pub enum Finding {
     ShadowEntry(ShadowEntryFinding),
     ServiceCredential(ServiceCredentialFinding),
     PersistenceEntry(PersistenceEntryFinding),
+    NtdsHash(NtdsHashFinding),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -102,6 +103,16 @@ pub struct PersistenceEntryFinding {
     pub user_context: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct NtdsHashFinding {
+    pub domain: String,
+    pub username: String,
+    pub rid: u32,
+    pub nt_hash: String,
+    pub lm_hash: String,
+    pub enabled: bool,
+}
+
 /// Encode a byte slice as a lowercase hex string.
 pub fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
@@ -149,6 +160,7 @@ impl Finding {
             Finding::ShadowEntry(_) => "shadow_entry",
             Finding::ServiceCredential(_) => "service_credential",
             Finding::PersistenceEntry(_) => "persistence_entry",
+            Finding::NtdsHash(_) => "ntds_hash",
         }
     }
 }

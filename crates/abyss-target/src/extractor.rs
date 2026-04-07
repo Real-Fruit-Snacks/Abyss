@@ -26,6 +26,8 @@ pub struct ExtractionContext {
     pub dpapi_master_key_files: Vec<(String, String, Vec<u8>)>,
     /// Browser data: (browser_name, local_state_bytes, login_data_bytes).
     pub browser_data: Vec<(String, Vec<u8>, Vec<u8>)>,
+    /// Raw NTDS.dit file bytes (ESE database from Domain Controllers).
+    pub ntds_dit: Option<Vec<u8>>,
     /// Raw file bytes read from the filesystem, keyed by path.
     /// Populated by Target::build_extraction_context for SSH/Linux extractors.
     pub filesystem_files: HashMap<String, Vec<u8>>,
@@ -46,6 +48,7 @@ impl ExtractionContext {
             dpapi_keyring: None,
             dpapi_master_key_files: Vec::new(),
             browser_data: Vec::new(),
+            ntds_dit: None,
             filesystem_files: HashMap::new(),
             discovered_users: Vec::new(),
         }

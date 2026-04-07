@@ -13,7 +13,7 @@ use abyss_volume::{discover_partitions, Partition};
 use crate::detect::OsType;
 use crate::error::TargetError;
 use crate::extractor::{ExtractionContext, Extractor};
-use crate::extractors::{BrowserExtractor, CachedCredsExtractor, DpapiExtractor, LinuxCredsExtractor, LsaExtractor, PersistenceExtractor, SamExtractor, SshExtractor};
+use crate::extractors::{BrowserExtractor, CachedCredsExtractor, DpapiExtractor, LinuxCredsExtractor, LsaExtractor, NtdsExtractor, PersistenceExtractor, SamExtractor, SshExtractor};
 
 /// Reader that presents a slice of a SharedBlockDevice as a standalone ReadSeek.
 struct SliceReader {
@@ -243,6 +243,15 @@ impl Target {
                     }
                     Err(e) => log::debug!("Could not read {}: {}", path, e),
                 }
+            }
+
+            // Try to read NTDS.dit (Domain Controller)
+            match ntfs.read_file("Windows/NTDS/ntds.dit") {
+                Ok(data) => {
+                    log::info!("Found NTDS.dit ({} bytes)", data.len());
+                    ctx.ntds_dit = Some(data);
+                }
+                Err(e) => log::debug!("Could not read NTDS.dit: {}", e),
             }
 
             // Discover users from Windows Users/ directory
@@ -484,6 +493,7 @@ impl Target {
 
         let extractors: Vec<Box<dyn Extractor>> = vec![
             Box::new(SamExtractor),
+            Box::new(NtdsExtractor),
             Box::new(LsaExtractor),
             Box::new(CachedCredsExtractor),
             Box::new(DpapiExtractor),
