@@ -7,6 +7,7 @@ use std::io::Write;
 pub enum OutputFormat {
     Text,
     Json,
+    Hashcat,
 }
 
 /// Collects findings and emits them in the selected format.
@@ -43,6 +44,7 @@ impl Collector {
         match self.format {
             OutputFormat::Text => crate::text::emit_text(&self.findings, writer),
             OutputFormat::Json => crate::json::emit_json(&self.findings, writer),
+            OutputFormat::Hashcat => crate::hashcat::emit_hashcat(&self.findings, writer),
         }
     }
 }

@@ -6,6 +6,38 @@ use serde::Serialize;
 #[serde(tag = "type")]
 pub enum Finding {
     TargetInfo(TargetInfoFinding),
+    SamHash(SamHashFinding),
+    LsaSecret(LsaSecretFinding),
+    CachedCredential(CachedCredentialFinding),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SamHashFinding {
+    pub username: String,
+    pub rid: u32,
+    pub nt_hash: String,
+    pub lm_hash: String,
+    pub account_flags: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LsaSecretFinding {
+    pub name: String,
+    pub secret_type: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CachedCredentialFinding {
+    pub username: String,
+    pub domain: String,
+    pub hash: String,
+    pub iteration_count: u32,
+}
+
+/// Encode a byte slice as a lowercase hex string.
+pub fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -40,6 +72,9 @@ impl Finding {
     pub fn type_name(&self) -> &'static str {
         match self {
             Finding::TargetInfo(_) => "target_info",
+            Finding::SamHash(_) => "sam_hash",
+            Finding::LsaSecret(_) => "lsa_secret",
+            Finding::CachedCredential(_) => "cached_credential",
         }
     }
 }

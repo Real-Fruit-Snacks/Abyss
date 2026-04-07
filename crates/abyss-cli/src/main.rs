@@ -86,6 +86,7 @@ fn main() {
 
     let output_format = match cli.output.as_str() {
         "json" => OutputFormat::Json,
+        "hashcat" => OutputFormat::Hashcat,
         _ => OutputFormat::Text,
     };
 

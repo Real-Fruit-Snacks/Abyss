@@ -49,6 +49,38 @@ pub fn emit_text(findings: &[Finding], writer: &mut dyn Write) -> Result<(), Out
                 }
                 writeln!(writer)?;
             }
+            Finding::SamHash(h) => {
+                writeln!(
+                    writer,
+                    "{} {}:{} nt={} lm={}",
+                    "[SAM]".bold().yellow(),
+                    h.username,
+                    h.rid,
+                    h.nt_hash,
+                    h.lm_hash
+                )?;
+            }
+            Finding::LsaSecret(s) => {
+                writeln!(
+                    writer,
+                    "{} [{}] {}: {}",
+                    "[LSA]".bold().red(),
+                    s.secret_type,
+                    s.name,
+                    s.value
+                )?;
+            }
+            Finding::CachedCredential(c) => {
+                writeln!(
+                    writer,
+                    "{} {}\\{} iter={} hash={}",
+                    "[DCC2]".bold().magenta(),
+                    c.domain,
+                    c.username,
+                    c.iteration_count,
+                    c.hash
+                )?;
+            }
         }
     }
     Ok(())
