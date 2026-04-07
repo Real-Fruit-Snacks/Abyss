@@ -483,6 +483,97 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
+// ─── Master password detection ─────────────────────────────────────────────
+
+/// Search raw key4.db bytes for the encrypted `password-check` blob.
+///
+/// Firefox stores a sentinel value encrypted under the same key used for
+/// credentials.  The plaintext is `"password-check"` with two bytes of PKCS#7
+/// padding (`\x02\x02`), making the expected decrypted value 16 bytes total.
+///
+/// We locate this by finding the ASCII text `"password-check"` in the raw
+/// SQLite file and then scanning forward for the nearest DER SEQUENCE tag that
+/// looks like an encrypted credential blob.
+fn find_password_check_blob(data: &[u8]) -> Option<Vec<u8>> {
+    let marker = b"password-check";
+    let mut search_pos = 0;
+
+    while let Some(offset) = find_bytes(&data[search_pos..], marker) {
+        let abs = search_pos + offset;
+
+        // Scan forward up to 512 bytes for a SEQUENCE tag (0x30) that begins a
+        // valid encrypted blob.
+        let scan_end = (abs + 512).min(data.len());
+        let mut pos = abs + marker.len();
+        while pos < scan_end {
+            if data[pos] == TAG_SEQUENCE {
+                // Try parsing as an encrypted credential blob.
+                if let Ok(blob) = parse_encrypted_blob(&data[pos..]) {
+                    // The blob must have a non-empty ciphertext.
+                    if !blob.ciphertext.is_empty() {
+                        return Some(data[pos..pos + 512.min(data.len() - pos)].to_vec());
+                    }
+                }
+            }
+            pos += 1;
+        }
+
+        search_pos = abs + 1;
+    }
+
+    None
+}
+
+/// Check that the derived key is correct by attempting to decrypt the
+/// `password-check` sentinel stored in key4.db.
+///
+/// Returns `true` when no master password is set (i.e. the empty password
+/// produces the correct key).  Returns `false` if the sentinel could not be
+/// found (treated as "assume no master password") or if decryption produces
+/// unexpected plaintext (master password is set).
+pub fn verify_no_master_password(key4_data: &[u8], derived_key: &[u8]) -> bool {
+    let blob_data = match find_password_check_blob(key4_data) {
+        Some(d) => d,
+        // If there is no password-check entry we cannot verify — assume OK.
+        None => return true,
+    };
+
+    let blob = match parse_encrypted_blob(&blob_data) {
+        Ok(b) => b,
+        Err(_) => return true,
+    };
+
+    let plaintext = match blob.algorithm {
+        EncryptionAlgorithm::TripleDes => {
+            let k = if derived_key.len() >= 24 {
+                &derived_key[..24]
+            } else {
+                derived_key
+            };
+            match triple_des_cbc_decrypt(k, &blob.iv, &blob.ciphertext) {
+                Ok(p) => p,
+                Err(_) => return false,
+            }
+        }
+        EncryptionAlgorithm::Aes256Cbc => {
+            let k = if derived_key.len() >= 32 {
+                &derived_key[..32]
+            } else {
+                derived_key
+            };
+            match aes256_cbc_decrypt(k, &blob.iv, &blob.ciphertext) {
+                Ok(p) => p,
+                Err(_) => return false,
+            }
+        }
+    };
+
+    // Expected plaintext: "password-check" (14 bytes) + "\x02\x02" (PKCS#7 padding already stripped,
+    // so we look for just the string — after unpadding the 16-byte block becomes 14 bytes).
+    // pkcs7_unpad already removed the padding bytes, so plaintext should be exactly b"password-check".
+    plaintext == b"password-check"
+}
+
 // ─── Crypto helpers ────────────────────────────────────────────────────────
 
 /// PKCS#7 unpad.  Returns the unpadded slice or an error.
@@ -761,6 +852,16 @@ pub fn extract_firefox_credentials(profile: &FirefoxProfile) -> Vec<FirefoxCrede
         }
     };
 
+    // Verify that no master password is set before attempting decryption.
+    // If a master password is set, the derived key is wrong and all decrypted
+    // values would be garbage.
+    if !verify_no_master_password(&profile.key4_db, &key) {
+        log::warn!(
+            "Firefox profile has a master password set — cannot extract credentials without it"
+        );
+        return Vec::new();
+    }
+
     let logins = match parse_logins_json(&profile.logins_json) {
         Ok(l) => l,
         Err(e) => {
@@ -871,5 +972,87 @@ mod tests {
         assert_eq!(der_integer_to_u32(&[0x01]).unwrap(), 1);
         assert_eq!(der_integer_to_u32(&[0x01, 0x00]).unwrap(), 256);
         assert_eq!(der_integer_to_u32(&[0x00, 0x01, 0x00, 0x00]).unwrap(), 65536);
+    }
+
+    // ─── Master password detection tests ──────────────────────────────────────
+
+    /// When key4.db contains no "password-check" marker, verification should
+    /// assume no master password and return true.
+    #[test]
+    fn test_verify_no_master_password_no_sentinel() {
+        // Arbitrary data without the "password-check" string.
+        let data = b"some random key4.db bytes without the sentinel";
+        let key = vec![0u8; 24];
+        assert!(verify_no_master_password(data, &key));
+    }
+
+    /// When key4.db contains "password-check" but decryption (with a wrong key)
+    /// produces incorrect plaintext, verification should return false.
+    #[test]
+    fn test_verify_no_master_password_wrong_key_detected() {
+        use cbc::cipher::{BlockEncryptMut, KeyIvInit};
+        use des::TdesEde3;
+
+        type TdesCbcEnc = cbc::Encryptor<TdesEde3>;
+
+        // Encrypt "password-check\x02\x02" (16 bytes, valid PKCS#7 padding for 3DES block=8)
+        // under a "correct" key.
+        let correct_key = [0x01u8; 24];
+        let iv = [0x00u8; 8];
+        // "password-check" is 14 bytes; PKCS#7 pad to 16 bytes -> append \x02\x02
+        let plaintext = b"password-check\x02\x02";
+        let buf = plaintext.to_vec();
+        // Pad to block boundary: 16 bytes is already a multiple of 8, so add a full block of padding.
+        // Actually for encryption with NoPadding we supply exactly 16 bytes (two 8-byte blocks).
+        let enc = TdesCbcEnc::new((&correct_key).into(), (&iv).into());
+        let ciphertext = enc
+            .encrypt_padded_vec_mut::<cbc::cipher::block_padding::NoPadding>(&buf);
+
+        // Build a DER-encoded encrypted blob:
+        // SEQUENCE {
+        //   SEQUENCE { OID(des-ede3-cbc), OCTET STRING(iv) }
+        //   OCTET STRING(ciphertext)
+        // }
+        let oid_bytes = OID_DES_EDE3_CBC;
+        let mut algo_seq_inner = Vec::new();
+        algo_seq_inner.push(TAG_OID);
+        algo_seq_inner.push(oid_bytes.len() as u8);
+        algo_seq_inner.extend_from_slice(oid_bytes);
+        algo_seq_inner.push(TAG_OCTET_STRING);
+        algo_seq_inner.push(iv.len() as u8);
+        algo_seq_inner.extend_from_slice(&iv);
+
+        let mut algo_seq = Vec::new();
+        algo_seq.push(TAG_SEQUENCE);
+        algo_seq.push(algo_seq_inner.len() as u8);
+        algo_seq.extend_from_slice(&algo_seq_inner);
+
+        let mut ct_field = Vec::new();
+        ct_field.push(TAG_OCTET_STRING);
+        ct_field.push(ciphertext.len() as u8);
+        ct_field.extend_from_slice(&ciphertext);
+
+        let mut outer_content = Vec::new();
+        outer_content.extend_from_slice(&algo_seq);
+        outer_content.extend_from_slice(&ct_field);
+
+        let mut blob_der = Vec::new();
+        blob_der.push(TAG_SEQUENCE);
+        blob_der.push(outer_content.len() as u8);
+        blob_der.extend_from_slice(&outer_content);
+
+        // Build a fake key4.db containing the marker string followed by the blob.
+        let mut fake_db = Vec::new();
+        fake_db.extend_from_slice(b"password-check");
+        fake_db.extend_from_slice(&blob_der);
+
+        // With the correct key, decryption should succeed and return true.
+        assert!(verify_no_master_password(&fake_db, &correct_key));
+
+        // With a wrong key (simulating a master password being set), the
+        // decrypted plaintext will not match and should return false.
+        let wrong_key = [0x42u8; 24];
+        assert!(!verify_no_master_password(&fake_db, &wrong_key));
+
     }
 }
