@@ -48,6 +48,66 @@ struct SignatureEntry {
 /// the MSV1_0 `LogonSessionList`. Offsets vary by Windows build number.
 fn msv_signatures() -> Vec<SignatureEntry> {
     vec![
+        // Windows 7 SP1 / Server 2008 R2 (builds 7600-7601)
+        SignatureEntry {
+            min_build: 7600,
+            max_build: 7601,
+            pattern: vec![
+                0x33, 0xff, 0x41, 0x89, 0x37, 0x4c, 0x8b, 0xf3, 0x45, 0x85, 0xc0, 0x74,
+            ],
+            ptr_offset: -4,
+            cred_offset: 0x60,
+            username_offset: 0x30,
+            domain_offset: 0x40,
+        },
+        // Windows 8 / Server 2012 (build 9200)
+        SignatureEntry {
+            min_build: 9200,
+            max_build: 9200,
+            pattern: vec![
+                0x33, 0xff, 0x41, 0x89, 0x37, 0x4c, 0x8b, 0xf3, 0x45, 0x85, 0xc0, 0x74,
+            ],
+            ptr_offset: -4,
+            cred_offset: 0x60,
+            username_offset: 0x30,
+            domain_offset: 0x40,
+        },
+        // Windows 8.1 / Server 2012 R2 (build 9600)
+        SignatureEntry {
+            min_build: 9600,
+            max_build: 9600,
+            pattern: vec![
+                0x33, 0xff, 0x41, 0x89, 0x37, 0x4c, 0x8b, 0xf3, 0x45, 0x85, 0xc0, 0x74,
+            ],
+            ptr_offset: -4,
+            cred_offset: 0x68,
+            username_offset: 0x30,
+            domain_offset: 0x40,
+        },
+        // Windows 10 1507 (build 10240)
+        SignatureEntry {
+            min_build: 10240,
+            max_build: 10240,
+            pattern: vec![
+                0x33, 0xff, 0x41, 0x89, 0x37, 0x4c, 0x8b, 0xf3, 0x45, 0x85, 0xc0, 0x74,
+            ],
+            ptr_offset: -4,
+            cred_offset: 0x110,
+            username_offset: 0x90,
+            domain_offset: 0xa0,
+        },
+        // Windows 10 1511 (build 10586)
+        SignatureEntry {
+            min_build: 10586,
+            max_build: 10586,
+            pattern: vec![
+                0x33, 0xff, 0x41, 0x89, 0x37, 0x4c, 0x8b, 0xf3, 0x45, 0x85, 0xc0, 0x74,
+            ],
+            ptr_offset: -4,
+            cred_offset: 0x110,
+            username_offset: 0x90,
+            domain_offset: 0xa0,
+        },
         // Windows 10 1607+ / Server 2016+ (builds 14393-19045)
         SignatureEntry {
             min_build: 14393,
@@ -91,6 +151,37 @@ fn msv_signatures() -> Vec<SignatureEntry> {
 /// Build the Wdigest signature table.
 fn wdigest_signatures() -> Vec<SignatureEntry> {
     vec![
+        // Windows 7 SP1 / Server 2008 R2 (builds 7600-7601)
+        SignatureEntry {
+            min_build: 7600,
+            max_build: 7601,
+            // Pattern near l_LogSessList in wdigest.dll for Win7/2008R2
+            pattern: vec![0x48, 0x3b, 0xda, 0x74],
+            ptr_offset: -4,
+            cred_offset: 0x30,
+            username_offset: 0x30,
+            domain_offset: 0x40,
+        },
+        // Windows 8 / Server 2012 (build 9200)
+        SignatureEntry {
+            min_build: 9200,
+            max_build: 9200,
+            pattern: vec![0x48, 0x3b, 0xda, 0x74],
+            ptr_offset: -4,
+            cred_offset: 0x30,
+            username_offset: 0x30,
+            domain_offset: 0x40,
+        },
+        // Windows 8.1 / Server 2012 R2 (build 9600)
+        SignatureEntry {
+            min_build: 9600,
+            max_build: 9600,
+            pattern: vec![0x48, 0x3b, 0xda, 0x74],
+            ptr_offset: -4,
+            cred_offset: 0x30,
+            username_offset: 0x30,
+            domain_offset: 0x40,
+        },
         // Windows 10 / Server 2016+ (builds 10240-19045)
         SignatureEntry {
             min_build: 10240,
@@ -129,7 +220,11 @@ pub fn extract_lsass_credentials(
 ) -> Result<Vec<LsassCredential>, MemoryError> {
     let mut credentials = Vec::new();
 
-    // Only x64 dumps are supported currently.
+    // Only x64 dumps are fully supported; x86 has limited extraction coverage.
+    if reader.arch == Architecture::X86 {
+        warn!("x86 memory dumps have limited credential extraction support");
+        return Ok(credentials);
+    }
     if reader.arch != Architecture::X64 {
         warn!("LSASS extraction only supports x64 dumps; skipping");
         return Ok(credentials);
