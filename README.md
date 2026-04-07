@@ -1,5 +1,7 @@
 # Abyss
 
+> **Status: Under Active Development** — Core functionality works but parsers are being validated against real-world forensic artifacts. NTDS.dit hash extraction from Server 2016+ databases is in progress. Expect breaking changes before v1.0.
+
 Offensive disk, memory, and Active Directory analysis framework written in Rust.
 
 Abyss extracts credentials, keys, and persistence mechanisms from forensic disk images and memory dumps — fast, offline, and without external dependencies.
