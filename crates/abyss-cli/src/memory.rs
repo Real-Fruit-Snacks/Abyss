@@ -6,7 +6,8 @@ use abyss_output::finding::{Finding, MemoryCredentialFinding, hex_encode};
 use std::fs::File;
 use std::io::BufReader;
 
-pub fn run(path: &str, output_format: OutputFormat) -> i32 {
+pub fn run(path: &str, output_format: OutputFormat, quiet: bool) -> i32 {
+    if !quiet { eprintln!("[*] Opening memory dump: {}", path); }
     let file = match File::open(path) {
         Ok(f) => f,
         Err(e) => {
@@ -24,13 +25,17 @@ pub fn run(path: &str, output_format: OutputFormat) -> i32 {
         }
     };
 
-    eprintln!(
-        "  Dump: arch={:?}, build={}, modules={}, memory_ranges={}",
-        dump.arch,
-        dump.os_build,
-        dump.modules().len(),
-        dump.memory_ranges().len()
-    );
+    if !quiet {
+        eprintln!("[+] Memory dump parsed");
+        eprintln!(
+            "  Dump: arch={:?}, build={}, modules={}, memory_ranges={}",
+            dump.arch,
+            dump.os_build,
+            dump.modules().len(),
+            dump.memory_ranges().len()
+        );
+        eprintln!("[*] Extracting credentials...");
+    }
 
     let credentials = match extract_lsass_credentials(&mut dump) {
         Ok(c) => c,
@@ -52,10 +57,12 @@ pub fn run(path: &str, output_format: OutputFormat) -> i32 {
         }));
     }
 
-    if collector.is_empty() {
-        eprintln!("  No credentials found in memory dump.");
-    } else {
-        eprintln!("  Found {} credential(s).", collector.count());
+    if !quiet {
+        if collector.is_empty() {
+            eprintln!("[-] No credentials found in memory dump.");
+        } else {
+            eprintln!("[+] Extraction complete: {} findings", collector.count());
+        }
     }
 
     if let Err(e) = collector.emit(&mut std::io::stdout()) {

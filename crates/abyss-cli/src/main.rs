@@ -52,6 +52,10 @@ enum Commands {
         /// Extract everything (default)
         #[arg(long)]
         all: bool,
+
+        /// Filter findings by type (comma-separated: sam,ntds,lsa,cached,dpapi,browser,ssh,shadow,service,persist,cloud,memory)
+        #[arg(long)]
+        filter: Option<String>,
     },
 
     /// Display target metadata
@@ -103,14 +107,14 @@ fn main() {
     };
 
     let exit_code = match cli.command {
-        Commands::Image { ref path, creds, keys, persist, all } => {
-            image::run(path, creds, keys, persist, all, output_format)
+        Commands::Image { ref path, creds, keys, persist, all, ref filter } => {
+            image::run(path, creds, keys, persist, all, filter.as_deref(), output_format, cli.quiet)
         }
         Commands::Memory { ref path } => {
-            memory::run(path, output_format)
+            memory::run(path, output_format, cli.quiet)
         }
         Commands::Info { ref path } => {
-            info::run(path, output_format)
+            info::run(path, output_format, cli.quiet)
         }
         Commands::Shell { ref path } => {
             shell::run(path)

@@ -40,6 +40,15 @@ impl Collector {
         self.findings.len()
     }
 
+    /// Retain only findings whose type_name matches any of the given types.
+    /// TargetInfo findings are always kept regardless.
+    pub fn filter_by_types(&mut self, types: &[&str]) {
+        self.findings.retain(|f| {
+            // Always keep TargetInfo
+            f.type_name() == "target_info" || types.iter().any(|t| f.type_name() == *t)
+        });
+    }
+
     pub fn emit(&self, writer: &mut dyn Write) -> Result<(), OutputError> {
         match self.format {
             OutputFormat::Text => crate::text::emit_text(&self.findings, writer),
