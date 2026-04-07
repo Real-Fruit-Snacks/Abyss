@@ -1,5 +1,6 @@
 mod image;
 mod info;
+mod shell;
 
 use abyss_output::collector::OutputFormat;
 use clap::{Parser, Subcommand};
@@ -98,8 +99,7 @@ fn main() {
             info::run(path, output_format)
         }
         Commands::Shell { ref path } => {
-            eprintln!("abyss shell: not yet implemented (target: {})", path);
-            2
+            shell::run(path)
         }
     };
 

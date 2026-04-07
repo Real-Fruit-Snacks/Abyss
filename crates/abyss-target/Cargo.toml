@@ -16,3 +16,5 @@ abyss-output = { workspace = true }
 abyss-crypto = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+md5 = { workspace = true }
+sha2 = { workspace = true }

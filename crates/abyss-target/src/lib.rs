@@ -8,6 +8,7 @@ pub mod error;
 pub mod extractor;
 pub mod extractors;
 pub mod filesystem;
+pub mod shell;
 pub mod target;
 
 pub use error::TargetError;
