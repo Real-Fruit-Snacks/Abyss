@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use abyss_container::detect_and_open;
+use abyss_container::{detect_and_open, SharedBlockDevice};
 use abyss_cstruct::read::ReadSeek;
 use abyss_extfs::ExtFilesystem;
 use abyss_ntfs::NtfsFilesystem;
@@ -15,53 +15,41 @@ use crate::error::TargetError;
 use crate::extractor::{ExtractionContext, Extractor};
 use crate::extractors::{BrowserExtractor, CachedCredsExtractor, DpapiExtractor, LinuxCredsExtractor, LsaExtractor, PersistenceExtractor, SamExtractor, SshExtractor};
 
-/// Internal reader that provides Read+Seek access to a slice of a file.
-struct PartitionReader {
-    inner: BufReader<File>,
+/// Reader that presents a slice of a SharedBlockDevice as a standalone ReadSeek.
+struct SliceReader {
+    device: SharedBlockDevice,
     base_offset: u64,
     size: u64,
     position: u64,
 }
 
-impl PartitionReader {
-    fn new(file: File, base_offset: u64, size: u64) -> Self {
-        Self {
-            inner: BufReader::new(file),
-            base_offset,
-            size,
-            position: 0,
-        }
+impl SliceReader {
+    fn new(device: SharedBlockDevice, base_offset: u64, size: u64) -> Self {
+        Self { device, base_offset, size, position: 0 }
     }
 }
 
-impl Read for PartitionReader {
+impl Read for SliceReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let remaining = self.size.saturating_sub(self.position);
-        if remaining == 0 {
-            return Ok(0);
-        }
+        if remaining == 0 { return Ok(0); }
         let max = buf.len().min(remaining as usize);
-        let n = self.inner.read(&mut buf[..max])?;
+        self.device.seek(SeekFrom::Start(self.base_offset + self.position))?;
+        let n = self.device.read(&mut buf[..max])?;
         self.position += n as u64;
         Ok(n)
     }
 }
 
-impl Seek for PartitionReader {
+impl Seek for SliceReader {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         let new_pos = match pos {
             SeekFrom::Start(offset) => offset,
-            SeekFrom::End(offset) => {
-                (self.size as i64 + offset).max(0) as u64
-            }
-            SeekFrom::Current(offset) => {
-                (self.position as i64 + offset).max(0) as u64
-            }
+            SeekFrom::End(offset) => (self.size as i64 + offset).max(0) as u64,
+            SeekFrom::Current(offset) => (self.position as i64 + offset).max(0) as u64,
         };
-        let clamped = new_pos.min(self.size);
-        self.inner.seek(SeekFrom::Start(self.base_offset + clamped))?;
-        self.position = clamped;
-        Ok(clamped)
+        self.position = new_pos.min(self.size);
+        Ok(self.position)
     }
 }
 
@@ -79,21 +67,15 @@ pub struct Target {
 impl Target {
     /// Open a disk image at `path`, discover partitions, and probe filesystems.
     pub fn open(path: &Path) -> Result<Self, TargetError> {
-        // Auto-detect container format (E01, VMDK, or raw fallback)
-        let container_reader: Box<dyn ReadSeek> = Box::new(BufReader::new(
-            File::open(path).map_err(|e| TargetError::OpenFailed {
-                detail: e.to_string(),
-            })?,
-        ));
-        let _container = detect_and_open(container_reader)?;
+        let file = File::open(path).map_err(|e| TargetError::OpenFailed {
+            detail: e.to_string(),
+        })?;
+        let reader: Box<dyn ReadSeek> = Box::new(BufReader::new(file));
+        let container = detect_and_open(reader)?;
+        let shared = SharedBlockDevice::new(container);
 
-        // Open a fresh reader for partition discovery
-        let mut disc_reader = BufReader::new(
-            File::open(path).map_err(|e| TargetError::OpenFailed {
-                detail: e.to_string(),
-            })?,
-        );
-
+        // Partition discovery using the virtual disk surface
+        let mut disc_reader = shared.clone_reader();
         let partitions = match discover_partitions(&mut disc_reader, 512u64) {
             Ok(parts) => parts,
             Err(_) => Vec::new(),
@@ -104,131 +86,67 @@ impl Target {
         let mut extfs: Option<ExtFilesystem> = None;
 
         if partitions.is_empty() {
-            // Try treating the whole image as a filesystem
-            let part_file = File::open(path).map_err(|e| TargetError::OpenFailed {
-                detail: e.to_string(),
-            })?;
-            let size = part_file.metadata().map(|m| m.len()).unwrap_or(0);
-            let mut part_reader: Box<dyn ReadSeek> =
-                Box::new(PartitionReader::new(part_file, 0, size));
-            if NtfsFilesystem::probe(&mut part_reader) {
-                let part_file2 = File::open(path).map_err(|e| TargetError::OpenFailed {
-                    detail: e.to_string(),
-                })?;
-                let size2 = part_file2.metadata().map(|m| m.len()).unwrap_or(0);
-                let reader2: Box<dyn ReadSeek> =
-                    Box::new(PartitionReader::new(part_file2, 0, size2));
-                match NtfsFilesystem::open(reader2) {
-                    Ok(fs) => {
-                        os = OsType::Windows;
-                        ntfs = Some(fs);
-                    }
-                    Err(e) => {
-                        log::debug!("NTFS open failed on whole image: {}", e);
-                    }
+            let size = shared.size();
+            // Try NTFS on whole image
+            let mut probe_reader: Box<dyn ReadSeek> =
+                Box::new(SliceReader::new(shared.clone_reader(), 0, size));
+            if NtfsFilesystem::probe(&mut probe_reader) {
+                let open_reader: Box<dyn ReadSeek> =
+                    Box::new(SliceReader::new(shared.clone_reader(), 0, size));
+                match NtfsFilesystem::open(open_reader) {
+                    Ok(fs) => { os = OsType::Windows; ntfs = Some(fs); }
+                    Err(e) => log::debug!("NTFS open failed on whole image: {}", e),
                 }
             }
-            // Try ext2/3/4 if NTFS didn't match
+            // Try ext if NTFS didn't match
             if ntfs.is_none() {
-                let part_file = File::open(path).map_err(|e| TargetError::OpenFailed {
-                    detail: e.to_string(),
-                })?;
-                let size = part_file.metadata().map(|m| m.len()).unwrap_or(0);
-                let mut part_reader: Box<dyn ReadSeek> =
-                    Box::new(PartitionReader::new(part_file, 0, size));
-                if ExtFilesystem::probe(&mut part_reader) {
-                    let part_file2 = File::open(path).map_err(|e| TargetError::OpenFailed {
-                        detail: e.to_string(),
-                    })?;
-                    let size2 = part_file2.metadata().map(|m| m.len()).unwrap_or(0);
-                    let reader2: Box<dyn ReadSeek> =
-                        Box::new(PartitionReader::new(part_file2, 0, size2));
-                    match ExtFilesystem::open(reader2) {
-                        Ok(fs) => {
-                            os = OsType::Linux;
-                            extfs = Some(fs);
-                        }
-                        Err(e) => {
-                            log::debug!("ext open failed on whole image: {}", e);
-                        }
+                let mut probe_reader: Box<dyn ReadSeek> =
+                    Box::new(SliceReader::new(shared.clone_reader(), 0, size));
+                if ExtFilesystem::probe(&mut probe_reader) {
+                    let open_reader: Box<dyn ReadSeek> =
+                        Box::new(SliceReader::new(shared.clone_reader(), 0, size));
+                    match ExtFilesystem::open(open_reader) {
+                        Ok(fs) => { os = OsType::Linux; extfs = Some(fs); }
+                        Err(e) => log::debug!("ext open failed on whole image: {}", e),
                     }
                 }
             }
         } else {
+            // Probe partitions for NTFS
             for partition in &partitions {
-                let part_file = File::open(path).map_err(|e| TargetError::OpenFailed {
-                    detail: e.to_string(),
-                })?;
-                let mut part_reader: Box<dyn ReadSeek> = Box::new(PartitionReader::new(
-                    part_file,
-                    partition.offset,
-                    partition.size,
+                let mut probe_reader: Box<dyn ReadSeek> = Box::new(SliceReader::new(
+                    shared.clone_reader(), partition.offset, partition.size,
                 ));
-                if NtfsFilesystem::probe(&mut part_reader) {
-                    let part_file2 = File::open(path).map_err(|e| TargetError::OpenFailed {
-                        detail: e.to_string(),
-                    })?;
-                    let reader2: Box<dyn ReadSeek> = Box::new(PartitionReader::new(
-                        part_file2,
-                        partition.offset,
-                        partition.size,
+                if NtfsFilesystem::probe(&mut probe_reader) {
+                    let open_reader: Box<dyn ReadSeek> = Box::new(SliceReader::new(
+                        shared.clone_reader(), partition.offset, partition.size,
                     ));
-                    match NtfsFilesystem::open(reader2) {
-                        Ok(fs) => {
-                            os = OsType::Windows;
-                            ntfs = Some(fs);
-                            break;
-                        }
-                        Err(e) => {
-                            log::debug!("NTFS open failed on partition {}: {}", partition.index, e);
-                        }
+                    match NtfsFilesystem::open(open_reader) {
+                        Ok(fs) => { os = OsType::Windows; ntfs = Some(fs); break; }
+                        Err(e) => log::debug!("NTFS open failed on partition {}: {}", partition.index, e),
                     }
                 }
             }
-            // Try ext2/3/4 on partitions if NTFS wasn't found
+            // Probe partitions for ext if no NTFS found
             if ntfs.is_none() {
                 for partition in &partitions {
-                    let part_file = File::open(path).map_err(|e| TargetError::OpenFailed {
-                        detail: e.to_string(),
-                    })?;
-                    let mut part_reader: Box<dyn ReadSeek> = Box::new(PartitionReader::new(
-                        part_file,
-                        partition.offset,
-                        partition.size,
+                    let mut probe_reader: Box<dyn ReadSeek> = Box::new(SliceReader::new(
+                        shared.clone_reader(), partition.offset, partition.size,
                     ));
-                    if ExtFilesystem::probe(&mut part_reader) {
-                        let part_file2 = File::open(path).map_err(|e| TargetError::OpenFailed {
-                            detail: e.to_string(),
-                        })?;
-                        let reader2: Box<dyn ReadSeek> = Box::new(PartitionReader::new(
-                            part_file2,
-                            partition.offset,
-                            partition.size,
+                    if ExtFilesystem::probe(&mut probe_reader) {
+                        let open_reader: Box<dyn ReadSeek> = Box::new(SliceReader::new(
+                            shared.clone_reader(), partition.offset, partition.size,
                         ));
-                        match ExtFilesystem::open(reader2) {
-                            Ok(fs) => {
-                                os = OsType::Linux;
-                                extfs = Some(fs);
-                                break;
-                            }
-                            Err(e) => {
-                                log::debug!("ext open failed on partition {}: {}", partition.index, e);
-                            }
+                        match ExtFilesystem::open(open_reader) {
+                            Ok(fs) => { os = OsType::Linux; extfs = Some(fs); break; }
+                            Err(e) => log::debug!("ext open failed on partition {}: {}", partition.index, e),
                         }
                     }
                 }
             }
         }
 
-        Ok(Target {
-            os,
-            hostname: None,
-            version: None,
-            domain: None,
-            partitions,
-            ntfs,
-            extfs,
-        })
+        Ok(Target { os, hostname: None, version: None, domain: None, partitions, ntfs, extfs })
     }
 
     /// Returns true if any filesystem was successfully opened.
