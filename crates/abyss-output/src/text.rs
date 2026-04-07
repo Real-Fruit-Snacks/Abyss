@@ -108,6 +108,49 @@ pub fn emit_text(findings: &[Finding], writer: &mut dyn Write) -> Result<(), Out
                     b.password
                 )?;
             }
+            Finding::SshPrivateKey(k) => {
+                let enc = if k.encrypted { "encrypted" } else { "plaintext" };
+                writeln!(
+                    writer,
+                    "{} {} type={} {} {}",
+                    "[SSH-KEY]".bold().cyan(),
+                    k.path,
+                    k.key_type,
+                    enc,
+                    k.fingerprint
+                )?;
+            }
+            Finding::SshAuthorizedKey(k) => {
+                writeln!(
+                    writer,
+                    "{} user={} type={} comment={}",
+                    "[SSH-AUTH]".bold().cyan(),
+                    k.user,
+                    k.key_type,
+                    k.comment
+                )?;
+            }
+            Finding::ShadowEntry(s) => {
+                writeln!(
+                    writer,
+                    "{} {}:{} algo={}",
+                    "[SHADOW]".bold().yellow(),
+                    s.username,
+                    s.hash,
+                    s.hash_algorithm
+                )?;
+            }
+            Finding::ServiceCredential(c) => {
+                writeln!(
+                    writer,
+                    "{} [{}] {} path={} {}",
+                    "[SERVICE]".bold().red(),
+                    c.service,
+                    c.credential,
+                    c.path,
+                    c.credential_type
+                )?;
+            }
         }
     }
     Ok(())

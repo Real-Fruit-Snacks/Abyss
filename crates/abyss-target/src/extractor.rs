@@ -1,5 +1,7 @@
 //! Extractor trait and ExtractionContext for the credential extraction pipeline.
 
+use std::collections::HashMap;
+
 use abyss_output::collector::Collector;
 use abyss_registry::RegistryHive;
 
@@ -24,6 +26,11 @@ pub struct ExtractionContext {
     pub dpapi_master_key_files: Vec<(String, String, Vec<u8>)>,
     /// Browser data: (browser_name, local_state_bytes, login_data_bytes).
     pub browser_data: Vec<(String, Vec<u8>, Vec<u8>)>,
+    /// Raw file bytes read from the filesystem, keyed by path.
+    /// Populated by Target::build_extraction_context for SSH/Linux extractors.
+    pub filesystem_files: HashMap<String, Vec<u8>>,
+    /// Usernames discovered from directory listing (e.g. home dirs).
+    pub discovered_users: Vec<String>,
 }
 
 impl ExtractionContext {
@@ -39,6 +46,8 @@ impl ExtractionContext {
             dpapi_keyring: None,
             dpapi_master_key_files: Vec::new(),
             browser_data: Vec::new(),
+            filesystem_files: HashMap::new(),
+            discovered_users: Vec::new(),
         }
     }
 }

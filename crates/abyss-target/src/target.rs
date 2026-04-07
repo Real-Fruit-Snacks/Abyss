@@ -13,7 +13,7 @@ use abyss_volume::{discover_partitions, Partition};
 use crate::detect::OsType;
 use crate::error::TargetError;
 use crate::extractor::{ExtractionContext, Extractor};
-use crate::extractors::{BrowserExtractor, CachedCredsExtractor, DpapiExtractor, LsaExtractor, SamExtractor};
+use crate::extractors::{BrowserExtractor, CachedCredsExtractor, DpapiExtractor, LinuxCredsExtractor, LsaExtractor, SamExtractor, SshExtractor};
 
 /// Internal reader that provides Read+Seek access to a slice of a file.
 struct PartitionReader {
@@ -218,6 +218,126 @@ impl Target {
                     Err(e) => log::debug!("Could not read {}: {}", path, e),
                 }
             }
+
+            // Discover users from Windows Users/ directory
+            if let Ok(users_idx) = ntfs.find_file("Users") {
+                if let Ok(entries) = ntfs.list_directory(users_idx) {
+                    for (name, _is_dir, _idx) in entries {
+                        if !name.is_empty()
+                            && name != "."
+                            && name != ".."
+                            && name != "Public"
+                            && name != "Default"
+                            && name != "Default User"
+                            && name != "All Users"
+                        {
+                            ctx.discovered_users.push(name);
+                        }
+                    }
+                }
+            }
+
+            // Discover users from Linux home/ directory
+            if let Ok(home_idx) = ntfs.find_file("home") {
+                if let Ok(entries) = ntfs.list_directory(home_idx) {
+                    for (name, _is_dir, _idx) in entries {
+                        if !name.is_empty() && name != "." && name != ".." {
+                            if !ctx.discovered_users.contains(&name) {
+                                ctx.discovered_users.push(name);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Read SSH private key and authorized_keys files for known users
+            let mut ssh_paths: Vec<String> = Vec::new();
+            let candidate_users: Vec<String> = {
+                let mut v = ctx.discovered_users.clone();
+                for common in &["Administrator", "admin", "user", "root", "ubuntu", "ec2-user"] {
+                    let s = common.to_string();
+                    if !v.contains(&s) {
+                        v.push(s);
+                    }
+                }
+                v
+            };
+            for user in &candidate_users {
+                let prefixes: Vec<String> = if user == "root" {
+                    vec!["root/.ssh".to_string(), "home/root/.ssh".to_string()]
+                } else {
+                    vec![
+                        format!("Users/{}/.ssh", user),
+                        format!("home/{}/.ssh", user),
+                    ]
+                };
+                for prefix in &prefixes {
+                    for key_name in &["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", "authorized_keys"] {
+                        ssh_paths.push(format!("{}/{}", prefix, key_name));
+                    }
+                }
+            }
+            // SSH host keys
+            for host_key in &["ssh_host_rsa_key", "ssh_host_ed25519_key", "ssh_host_ecdsa_key"] {
+                ssh_paths.push(format!("etc/ssh/{}", host_key));
+            }
+
+            for path in &ssh_paths {
+                if let Ok(data) = ntfs.read_file(path) {
+                    ctx.filesystem_files.insert(path.clone(), data);
+                }
+            }
+
+            // Linux credential files
+            let linux_paths = [
+                "etc/shadow",
+                "etc/passwd",
+                "root/.aws/credentials",
+                "root/.git-credentials",
+                "root/.netrc",
+                "root/.docker/config.json",
+                "root/.vnc/passwd",
+            ];
+            for path in &linux_paths {
+                if let Ok(data) = ntfs.read_file(path) {
+                    ctx.filesystem_files.insert(path.to_string(), data);
+                }
+            }
+
+            // Per-user Linux service files
+            let user_rel_paths = [
+                ".aws/credentials",
+                ".git-credentials",
+                ".netrc",
+                ".docker/config.json",
+            ];
+            for user in &candidate_users {
+                let home = if user == "root" {
+                    "root".to_string()
+                } else {
+                    format!("home/{}", user)
+                };
+                for rel in &user_rel_paths {
+                    let full = format!("{}/{}", home, rel);
+                    if let Ok(data) = ntfs.read_file(&full) {
+                        ctx.filesystem_files.insert(full, data);
+                    }
+                }
+            }
+
+            // WireGuard configs — try to list etc/wireguard/
+            if let Ok(wg_idx) = ntfs.find_file("etc/wireguard") {
+                if let Ok(entries) = ntfs.list_directory(wg_idx) {
+                    for (name, _is_dir, _idx) in entries {
+                        if name.ends_with(".conf") {
+                            let path = format!("etc/wireguard/{}", name);
+                            if let Ok(data) = ntfs.read_file(&path) {
+                                ctx.filesystem_files.insert(path, data);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Ok(ctx)
@@ -239,6 +359,8 @@ impl Target {
             Box::new(CachedCredsExtractor),
             Box::new(DpapiExtractor),
             Box::new(BrowserExtractor),
+            Box::new(SshExtractor),
+            Box::new(LinuxCredsExtractor),
         ];
 
         for extractor in &extractors {

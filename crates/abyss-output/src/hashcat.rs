@@ -24,6 +24,10 @@ pub fn emit_hashcat(findings: &[Finding], writer: &mut dyn Write) -> Result<(), 
                     c.iteration_count, c.username, c.hash
                 )?;
             }
+            Finding::ShadowEntry(s) => {
+                // hashcat auto-detects mode from the hash prefix ($6$, $5$, $1$, etc.)
+                writeln!(writer, "{}", s.hash)?;
+            }
             _ => {}
         }
     }

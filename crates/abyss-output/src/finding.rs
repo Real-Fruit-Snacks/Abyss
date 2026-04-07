@@ -11,6 +11,10 @@ pub enum Finding {
     CachedCredential(CachedCredentialFinding),
     DpapiMasterKey(DpapiMasterKeyFinding),
     BrowserCredential(BrowserCredentialFinding),
+    SshPrivateKey(SshKeyFinding),
+    SshAuthorizedKey(SshAuthKeyFinding),
+    ShadowEntry(ShadowEntryFinding),
+    ServiceCredential(ServiceCredentialFinding),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,6 +55,41 @@ pub struct BrowserCredentialFinding {
     pub url: String,
     pub username: String,
     pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SshKeyFinding {
+    pub user: String,
+    pub path: String,
+    pub key_type: String,
+    pub fingerprint: String,
+    pub encrypted: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SshAuthKeyFinding {
+    pub user: String,
+    pub key_type: String,
+    pub fingerprint: String,
+    pub comment: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ShadowEntryFinding {
+    pub username: String,
+    pub hash: String,
+    pub hash_algorithm: String,
+    pub uid: u32,
+    pub shell: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ServiceCredentialFinding {
+    pub service: String,
+    pub path: String,
+    pub username: String,
+    pub credential: String,
+    pub credential_type: String,
 }
 
 /// Encode a byte slice as a lowercase hex string.
@@ -95,6 +134,10 @@ impl Finding {
             Finding::CachedCredential(_) => "cached_credential",
             Finding::DpapiMasterKey(_) => "dpapi_master_key",
             Finding::BrowserCredential(_) => "browser_credential",
+            Finding::SshPrivateKey(_) => "ssh_private_key",
+            Finding::SshAuthorizedKey(_) => "ssh_authorized_key",
+            Finding::ShadowEntry(_) => "shadow_entry",
+            Finding::ServiceCredential(_) => "service_credential",
         }
     }
 }
