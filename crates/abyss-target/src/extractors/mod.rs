@@ -5,6 +5,7 @@ pub mod cached_creds;
 pub mod dpapi;
 pub mod linux;
 pub mod lsa;
+pub mod persistence;
 pub mod sam;
 pub mod ssh;
 
@@ -13,5 +14,6 @@ pub use cached_creds::CachedCredsExtractor;
 pub use dpapi::DpapiExtractor;
 pub use linux::LinuxCredsExtractor;
 pub use lsa::LsaExtractor;
+pub use persistence::PersistenceExtractor;
 pub use sam::SamExtractor;
 pub use ssh::SshExtractor;

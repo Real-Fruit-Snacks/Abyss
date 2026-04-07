@@ -15,6 +15,7 @@ pub enum Finding {
     SshAuthorizedKey(SshAuthKeyFinding),
     ShadowEntry(ShadowEntryFinding),
     ServiceCredential(ServiceCredentialFinding),
+    PersistenceEntry(PersistenceEntryFinding),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,6 +93,15 @@ pub struct ServiceCredentialFinding {
     pub credential_type: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PersistenceEntryFinding {
+    pub mechanism: String,
+    pub name: String,
+    pub path: String,
+    pub trigger: String,
+    pub user_context: String,
+}
+
 /// Encode a byte slice as a lowercase hex string.
 pub fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
@@ -138,6 +148,7 @@ impl Finding {
             Finding::SshAuthorizedKey(_) => "ssh_authorized_key",
             Finding::ShadowEntry(_) => "shadow_entry",
             Finding::ServiceCredential(_) => "service_credential",
+            Finding::PersistenceEntry(_) => "persistence_entry",
         }
     }
 }

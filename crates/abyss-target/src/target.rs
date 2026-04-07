@@ -13,7 +13,7 @@ use abyss_volume::{discover_partitions, Partition};
 use crate::detect::OsType;
 use crate::error::TargetError;
 use crate::extractor::{ExtractionContext, Extractor};
-use crate::extractors::{BrowserExtractor, CachedCredsExtractor, DpapiExtractor, LinuxCredsExtractor, LsaExtractor, SamExtractor, SshExtractor};
+use crate::extractors::{BrowserExtractor, CachedCredsExtractor, DpapiExtractor, LinuxCredsExtractor, LsaExtractor, PersistenceExtractor, SamExtractor, SshExtractor};
 
 /// Internal reader that provides Read+Seek access to a slice of a file.
 struct PartitionReader {
@@ -361,6 +361,7 @@ impl Target {
             Box::new(BrowserExtractor),
             Box::new(SshExtractor),
             Box::new(LinuxCredsExtractor),
+            Box::new(PersistenceExtractor),
         ];
 
         for extractor in &extractors {

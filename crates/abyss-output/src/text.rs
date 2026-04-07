@@ -151,6 +151,11 @@ pub fn emit_text(findings: &[Finding], writer: &mut dyn Write) -> Result<(), Out
                     c.credential_type
                 )?;
             }
+            Finding::PersistenceEntry(p) => {
+                writeln!(writer, "  {} [{}] {}: {} (trigger={}, user={})",
+                    "[PERSIST]".bold().yellow(),
+                    p.mechanism, p.name, p.path, p.trigger, p.user_context)?;
+            }
         }
     }
     Ok(())
