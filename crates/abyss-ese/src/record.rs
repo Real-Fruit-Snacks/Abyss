@@ -11,6 +11,9 @@ use crate::catalog::ColumnDef;
 pub struct EseRecord {
     /// Column values keyed by column ID. Value is raw bytes.
     pub values: HashMap<u32, Vec<u8>>,
+    /// Column IDs whose values are long-value references (separated/stored in LV tree).
+    /// The value in `values` for these columns is a 4-byte LV ID (little-endian).
+    pub lv_columns: Vec<u32>,
 }
 
 impl EseRecord {
@@ -18,6 +21,7 @@ impl EseRecord {
     pub fn new() -> Self {
         Self {
             values: HashMap::new(),
+            lv_columns: Vec::new(),
         }
     }
 
@@ -191,6 +195,10 @@ pub fn parse_record(
 /// Tagged columns are stored as:
 ///   [tag_id:u16 LE][offset:u16 LE] pairs (the "tag array"), followed by data.
 /// The offset values are relative to the start of the tagged data area.
+///
+/// In ESE format revision >= 0x620, the offset field uses bits 14-15 as flags:
+///   - Bit 14 (0x4000): "derived" flag
+///   - The actual offset is `raw_offset & 0x3FFF`
 fn parse_tagged_columns(rec: &[u8], tagged_start: usize, record: &mut EseRecord) {
     if tagged_start >= rec.len() {
         return;
@@ -202,8 +210,9 @@ fn parse_tagged_columns(rec: &[u8], tagged_start: usize, record: &mut EseRecord)
     }
 
     // Read the tag array. Each entry is 4 bytes (tag_id:u16 + offset:u16).
-    // The first entry's offset tells us where the tag array ends and data begins.
-    let first_offset = u16::from_le_bytes([tagged[2], tagged[3]]) as usize;
+    // The first entry's offset (masked) tells us where the tag array ends and data begins.
+    let first_offset_raw = u16::from_le_bytes([tagged[2], tagged[3]]);
+    let first_offset = (first_offset_raw & 0x3FFF) as usize;
     if first_offset < 4 || first_offset > tagged.len() {
         return;
     }
@@ -221,13 +230,15 @@ fn parse_tagged_columns(rec: &[u8], tagged_start: usize, record: &mut EseRecord)
             break;
         }
         let tag_id = u16::from_le_bytes([tagged[base], tagged[base + 1]]) as u32;
-        let offset = u16::from_le_bytes([tagged[base + 2], tagged[base + 3]]) as usize;
-        entries.push((tag_id, offset));
+        let offset_raw = u16::from_le_bytes([tagged[base + 2], tagged[base + 3]]);
+        let offset = (offset_raw & 0x3FFF) as usize;
+        let has_flag = offset_raw & 0x4000 != 0;
+        entries.push((tag_id, offset, has_flag));
     }
 
     // Extract data for each tagged column
     for i in 0..entries.len() {
-        let (tag_id, start) = entries[i];
+        let (tag_id, start, has_flag) = entries[i];
         let end = if i + 1 < entries.len() {
             entries[i + 1].1
         } else {
@@ -236,11 +247,22 @@ fn parse_tagged_columns(rec: &[u8], tagged_start: usize, record: &mut EseRecord)
 
         if start < tagged.len() && end <= tagged.len() && end > start {
             let tag_data = &tagged[start..end];
-            // In ESE, tagged column data may have a 1-byte flag prefix
-            // (bit 0 = variable length, bit 1 = compressed, etc.)
-            // For simplicity, if the first byte has a known flag pattern,
-            // we skip it. But for raw extraction we keep all bytes.
-            record.values.insert(tag_id, tag_data.to_vec());
+            // When the 0x4000 flag is set, the first byte of the data is a
+            // per-value flag byte that should be skipped to get the actual value.
+            if has_flag && tag_data.len() > 1 {
+                let flag_byte = tag_data[0];
+                let value = &tag_data[1..];
+                // Bit 2 (0x04) of the flag byte = "fSeparated": the value is
+                // a long-value reference (4-byte LV ID stored in the LV tree).
+                // Bit 0 (0x01) = fVariable (variable-length encoding, always set for var/tagged).
+                // Bit 3 (0x08) = fMultiValue.
+                if flag_byte & 0x04 != 0 {
+                    record.lv_columns.push(tag_id);
+                }
+                record.values.insert(tag_id, value.to_vec());
+            } else {
+                record.values.insert(tag_id, tag_data.to_vec());
+            };
         }
     }
 }

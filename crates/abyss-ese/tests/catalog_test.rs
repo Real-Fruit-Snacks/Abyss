@@ -65,6 +65,7 @@ fn table_def_creation() {
         name: "datatable".to_string(),
         obj_id: 2,
         root_page: 100,
+        lv_root_page: None,
         columns: vec![
             ColumnDef {
                 id: 1,

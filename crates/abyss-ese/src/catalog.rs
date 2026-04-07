@@ -28,12 +28,16 @@ pub struct TableDef {
     pub obj_id: u32,
     /// Root page of the data B+ tree for this table.
     pub root_page: u32,
+    /// Root page of the long value B+ tree (object type 5 in MSysObjects).
+    /// `None` if no long value tree exists for this table.
+    pub lv_root_page: Option<u32>,
     pub columns: Vec<ColumnDef>,
 }
 
 /// Catalog entry type values.
 const CATALOG_TYPE_TABLE: u16 = 1;
 const CATALOG_TYPE_COLUMN: u16 = 2;
+const CATALOG_TYPE_LONG_VALUE: u16 = 4;
 
 /// The root page of the MSysObjects catalog B+ tree.
 pub const CATALOG_ROOT_PAGE: u32 = 4;
@@ -67,77 +71,38 @@ pub fn fixed_column_size(col_type: u16) -> u32 {
     }
 }
 
-/// Parse a single catalog record from raw leaf tag data.
+/// Parse a single catalog record from raw entry data (key already stripped).
+///
+/// The entry data starts directly with the ESE record header:
+///   `[last_fixed_col_id:u8][last_var_col_id:u8][var_offset:u16 LE][fixed_data...][var_offsets...][var_data...]`
+///
+/// MSysObjects has fixed columns 1-7 (26 bytes), but some databases include
+/// additional fixed columns (IDs 8, 9) for extended metadata. We require
+/// `last_fixed_col_id >= 7` and read only the first 7 columns.
 ///
 /// Returns `(obj_id_table, entry_type, id, coltyp_or_pgno, flags, name)`.
 pub fn parse_catalog_record(data: &[u8]) -> Option<(u32, u16, u32, u32, u32, String)> {
-    // The catalog key is ObjidTable(4) + Type(2) + Id(4) = 10 bytes prefix,
-    // but in leaf records the key prefix length varies. The record header
-    // starts after the key. In practice, the MSysObjects leaf tag layout is:
-    //
-    //   [key_prefix...][last_fixed_col_id:u8][last_var_col_id:u8][var_offset:u16][fixed_data...][var_offsets...][var_data...]
-    //
-    // For the catalog, the key is typically the first few bytes that encode
-    // (ObjidTable, Type, Id). We need to find the record header.
-    //
-    // ESE catalog leaf records have a prefix byte count. In the tag data:
-    //   byte 0-3: depends on tag flags. In new-format databases, tag data
-    //             may have a 4-byte prefix (common key prefix + suffix) or
-    //             the tag flags indicate how to interpret it.
-    //
-    // For simplicity and robustness, we scan for the record structure.
-    // The MSysObjects fixed columns have IDs 1-7. So last_fixed_col_id
-    // should be 7 (0x07). We search for this pattern.
-
-    if data.len() < 4 {
+    if data.len() < 4 + CATALOG_FIXED_SIZE {
         return None;
     }
 
-    // In ESE leaf pages for the catalog, after the page-level key prefix handling,
-    // each tag's data has:
-    //   - A key suffix (variable length)
-    //   - The record data
-    //
-    // The record data always starts with:
-    //   last_fixed_column_id (u8) -- should be 7 for catalog
-    //   last_variable_column_id (u8) -- typically 128 or higher
-    //   variable_offset_array_offset (u16 LE)
-    //
-    // We try different key prefix lengths. The catalog key is 10 bytes
-    // (ObjidTable=4 + Type=2 + Id=4), but tag 0 may have no key prefix (it's
-    // the first entry), and subsequent tags have varying common prefix compression.
-    //
-    // Strategy: look for last_fixed_col_id == 7 at various offsets.
+    let rec = data;
 
-    let mut record_start = None;
-    for prefix_len in 0..data.len().saturating_sub(4).min(32) {
-        if data[prefix_len] == 7 && prefix_len + 4 <= data.len() {
-            let last_var = data[prefix_len + 1];
-            // Variable columns for catalog start at ID 128
-            if last_var >= 127 && last_var <= 191 {
-                let var_offset = u16::from_le_bytes([
-                    data[prefix_len + 2],
-                    data[prefix_len + 3],
-                ]);
-                let var_off_usize = var_offset as usize;
-                // The var_offset should point somewhere reasonable within the record
-                if var_off_usize >= CATALOG_FIXED_SIZE && var_off_usize < data.len().saturating_sub(prefix_len) {
-                    record_start = Some(prefix_len);
-                    break;
-                }
-            }
-        }
-    }
-
-    let rs = record_start?;
-    let rec = &data[rs..];
-    if rec.len() < 4 + CATALOG_FIXED_SIZE {
-        return None;
-    }
-
-    let _last_fixed = rec[0]; // should be 7
+    let last_fixed = rec[0];
     let last_var = rec[1];
     let var_offset = u16::from_le_bytes([rec[2], rec[3]]) as usize;
+
+    // Validate: last_fixed must be >= 7 (the catalog has 7 base fixed columns;
+    // some databases extend this to 8 or 9 with additional metadata columns).
+    // last_var should be 0 (no variable columns) or >= 128.
+    // var_offset must be >= 4 + CATALOG_FIXED_SIZE = 30.
+    if last_fixed < 7
+        || (last_var != 0 && last_var < 127)
+        || (var_offset < 4 + CATALOG_FIXED_SIZE)
+        || var_offset >= rec.len()
+    {
+        return None;
+    }
 
     // Fixed columns start at offset 4 in the record
     let fixed = &rec[4..];
@@ -219,12 +184,13 @@ pub fn build_table_defs(records: &[(u32, u16, u32, u32, u32, String)]) -> Vec<Ta
                 name: name.clone(),
                 obj_id: id,
                 root_page: coltyp_or_pgno,
+                lv_root_page: None,
                 columns: Vec::new(),
             });
         }
     }
 
-    // Second pass: collect column entries
+    // Second pass: collect column entries and long value tree roots
     for &(obj_id_table, entry_type, id, coltyp_or_pgno, flags, ref name) in records {
         if entry_type == CATALOG_TYPE_COLUMN {
             if let Some(table) = tables.get_mut(&obj_id_table) {
@@ -240,6 +206,12 @@ pub fn build_table_defs(records: &[(u32, u16, u32, u32, u32, String)]) -> Vec<Ta
                     is_variable: id >= 128 && id <= 255,
                     is_tagged: id > 255,
                 });
+            }
+        } else if entry_type == CATALOG_TYPE_LONG_VALUE {
+            // Object type 5: long value tree. The ObjidTable links it to its
+            // parent table, and ColtypOrPgnoFDP is the root page of the LV tree.
+            if let Some(table) = tables.get_mut(&obj_id_table) {
+                table.lv_root_page = Some(coltyp_or_pgno);
             }
         }
     }
