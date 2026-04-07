@@ -2,6 +2,10 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
+/// Maximum file size to read into memory for extraction (50 MB).
+/// Larger files (like NTDS.dit) are handled separately via streaming.
+const MAX_FILE_READ_SIZE: u64 = 50 * 1024 * 1024;
+
 use abyss_container::{detect_and_open, SharedBlockDevice};
 use abyss_cstruct::read::ReadSeek;
 use abyss_extfs::ExtFilesystem;
@@ -228,6 +232,23 @@ impl Target {
         Err(TargetError::NoFilesystem)
     }
 
+    /// Read a file, but skip if larger than MAX_FILE_READ_SIZE.
+    /// Returns None if the file is too large or doesn't exist.
+    #[allow(dead_code)]
+    fn read_file_capped(&mut self, path: &str) -> Option<Vec<u8>> {
+        match self.read_file(path) {
+            Ok(data) => {
+                if data.len() as u64 > MAX_FILE_READ_SIZE {
+                    log::debug!("Skipping large file {} ({} bytes)", path, data.len());
+                    None
+                } else {
+                    Some(data)
+                }
+            }
+            Err(_) => None,
+        }
+    }
+
     /// List directory contents from whichever filesystem is available.
     /// Returns Vec of (name, is_directory, id).
     pub fn list_directory_by_path(&mut self, path: &str) -> Result<Vec<(String, bool, u64)>, TargetError> {
@@ -307,14 +328,14 @@ impl Target {
                 }
             }
 
-            // Try to read NTDS.dit (Domain Controller)
+            // Try to read NTDS.dit (Domain Controller) — not size-capped, ESE parser needs full file
             if ctx.ntds_dit.is_none() {
                 match ntfs.read_file("Windows/NTDS/ntds.dit") {
                     Ok(data) => {
-                        log::info!("Found NTDS.dit ({} bytes)", data.len());
+                        log::info!("Read NTDS.dit: {} bytes ({:.1} MB)", data.len(), data.len() as f64 / 1_048_576.0);
                         ctx.ntds_dit = Some(data);
                     }
-                    Err(e) => log::debug!("Could not read NTDS.dit: {}", e),
+                    Err(e) => log::debug!("NTDS.dit not found: {}", e),
                 }
             }
 
@@ -384,7 +405,11 @@ impl Target {
 
             for path in &ssh_paths {
                 if let Ok(data) = ntfs.read_file(path) {
-                    ctx.filesystem_files.entry(path.clone()).or_insert(data);
+                    if data.len() <= MAX_FILE_READ_SIZE as usize {
+                        ctx.filesystem_files.entry(path.clone()).or_insert(data);
+                    } else {
+                        log::debug!("Skipping large file {} ({} bytes)", path, data.len());
+                    }
                 }
             }
 
@@ -415,7 +440,11 @@ impl Target {
             ];
             for path in &linux_paths {
                 if let Ok(data) = ntfs.read_file(path) {
-                    ctx.filesystem_files.entry(path.to_string()).or_insert(data);
+                    if data.len() <= MAX_FILE_READ_SIZE as usize {
+                        ctx.filesystem_files.entry(path.to_string()).or_insert(data);
+                    } else {
+                        log::debug!("Skipping large file {} ({} bytes)", path, data.len());
+                    }
                 }
             }
 
@@ -424,6 +453,10 @@ impl Target {
                 ".aws/credentials",
                 ".aws/config",
                 ".git-credentials",
+                ".config/git/credentials",
+                ".config/netlify/config.json",
+                ".npmrc",
+                ".pypirc",
                 ".netrc",
                 ".docker/config.json",
                 ".azure/accessTokens.json",
@@ -440,6 +473,7 @@ impl Target {
                 ".bash_profile",
                 ".profile",
                 ".zshrc",
+                ".gitconfig",
             ];
             for user in &candidate_users {
                 let home = if user == "root" {
@@ -450,8 +484,19 @@ impl Target {
                 for rel in &user_rel_paths {
                     let full = format!("{}/{}", home, rel);
                     if let Ok(data) = ntfs.read_file(&full) {
-                        ctx.filesystem_files.entry(full).or_insert(data);
+                        if data.len() <= MAX_FILE_READ_SIZE as usize {
+                            ctx.filesystem_files.entry(full).or_insert(data);
+                        } else {
+                            log::debug!("Skipping large file {} ({} bytes)", full, data.len());
+                        }
                     }
+                }
+            }
+
+            // Kubernetes service account token
+            if let Ok(data) = ntfs.read_file("var/run/secrets/kubernetes.io/serviceaccount/token") {
+                if data.len() <= MAX_FILE_READ_SIZE as usize {
+                    ctx.filesystem_files.entry("var/run/secrets/kubernetes.io/serviceaccount/token".to_string()).or_insert(data);
                 }
             }
 
@@ -473,7 +518,11 @@ impl Target {
                 for rel in &win_cloud_rel_paths {
                     let full = format!("Users/{}/{}", user, rel);
                     if let Ok(data) = ntfs.read_file(&full) {
-                        ctx.filesystem_files.entry(full).or_insert(data);
+                        if data.len() <= MAX_FILE_READ_SIZE as usize {
+                            ctx.filesystem_files.entry(full).or_insert(data);
+                        } else {
+                            log::debug!("Skipping large file {} ({} bytes)", full, data.len());
+                        }
                     }
                 }
             }
@@ -485,7 +534,11 @@ impl Target {
                         if name.ends_with(".conf") {
                             let path = format!("etc/wireguard/{}", name);
                             if let Ok(data) = ntfs.read_file(&path) {
-                                ctx.filesystem_files.entry(path).or_insert(data);
+                                if data.len() <= MAX_FILE_READ_SIZE as usize {
+                                    ctx.filesystem_files.entry(path).or_insert(data);
+                                } else {
+                                    log::debug!("Skipping large file {} ({} bytes)", path, data.len());
+                                }
                             }
                         }
                     }
@@ -631,7 +684,11 @@ impl Target {
                     for key_name in &["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", "authorized_keys"] {
                         let path = format!("{}/{}", prefix, key_name);
                         if let Ok(data) = extfs.read_file(&path) {
-                            ctx.filesystem_files.entry(path).or_insert(data);
+                            if data.len() <= MAX_FILE_READ_SIZE as usize {
+                                ctx.filesystem_files.entry(path).or_insert(data);
+                            } else {
+                                log::debug!("Skipping large file {} ({} bytes)", path, data.len());
+                            }
                         }
                     }
                 }
@@ -641,7 +698,11 @@ impl Target {
             for host_key in &["ssh_host_rsa_key", "ssh_host_ed25519_key", "ssh_host_ecdsa_key"] {
                 let path = format!("etc/ssh/{}", host_key);
                 if let Ok(data) = extfs.read_file(&path) {
-                    ctx.filesystem_files.entry(path).or_insert(data);
+                    if data.len() <= MAX_FILE_READ_SIZE as usize {
+                        ctx.filesystem_files.entry(path).or_insert(data);
+                    } else {
+                        log::debug!("Skipping large file {} ({} bytes)", path, data.len());
+                    }
                 }
             }
 
@@ -668,7 +729,11 @@ impl Target {
             ];
             for path in &linux_paths {
                 if let Ok(data) = extfs.read_file(path) {
-                    ctx.filesystem_files.entry(path.to_string()).or_insert(data);
+                    if data.len() <= MAX_FILE_READ_SIZE as usize {
+                        ctx.filesystem_files.entry(path.to_string()).or_insert(data);
+                    } else {
+                        log::debug!("Skipping large file {} ({} bytes)", path, data.len());
+                    }
                 }
             }
 
@@ -677,6 +742,10 @@ impl Target {
                 ".aws/credentials",
                 ".aws/config",
                 ".git-credentials",
+                ".config/git/credentials",
+                ".config/netlify/config.json",
+                ".npmrc",
+                ".pypirc",
                 ".netrc",
                 ".docker/config.json",
                 ".azure/accessTokens.json",
@@ -693,14 +762,28 @@ impl Target {
                 ".bash_profile",
                 ".profile",
                 ".zshrc",
+                ".gitconfig",
             ];
             for user in &candidate_users {
                 let home = if user == "root" { "root".to_string() } else { format!("home/{}", user) };
                 for rel in &user_rel_paths {
                     let full = format!("{}/{}", home, rel);
                     if let Ok(data) = extfs.read_file(&full) {
-                        ctx.filesystem_files.entry(full).or_insert(data);
+                        if data.len() <= MAX_FILE_READ_SIZE as usize {
+                            ctx.filesystem_files.entry(full).or_insert(data);
+                        } else {
+                            log::debug!("Skipping large file {} ({} bytes)", full, data.len());
+                        }
                     }
+                }
+            }
+
+            // Kubernetes service account token
+            if let Ok(data) = extfs.read_file("var/run/secrets/kubernetes.io/serviceaccount/token") {
+                if data.len() <= MAX_FILE_READ_SIZE as usize {
+                    ctx.filesystem_files.entry("var/run/secrets/kubernetes.io/serviceaccount/token".to_string()).or_insert(data);
+                } else {
+                    log::debug!("Skipping large file var/run/secrets/kubernetes.io/serviceaccount/token ({} bytes)", data.len());
                 }
             }
 
@@ -711,7 +794,11 @@ impl Target {
                         if entry.name.ends_with(".conf") {
                             let path = format!("etc/wireguard/{}", entry.name);
                             if let Ok(data) = extfs.read_file(&path) {
-                                ctx.filesystem_files.entry(path).or_insert(data);
+                                if data.len() <= MAX_FILE_READ_SIZE as usize {
+                                    ctx.filesystem_files.entry(path).or_insert(data);
+                                } else {
+                                    log::debug!("Skipping large file {} ({} bytes)", path, data.len());
+                                }
                             }
                         }
                     }
