@@ -1,0 +1,11 @@
+[package]
+name = "abyss-ese"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ESE/JET database parser for NTDS.dit"
+
+[dependencies]
+abyss-cstruct = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
