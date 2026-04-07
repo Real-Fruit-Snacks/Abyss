@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use abyss_crypto::sam::SamEntry;
 use abyss_output::collector::Collector;
 use abyss_registry::RegistryHive;
 
@@ -20,6 +21,8 @@ pub struct ExtractionContext {
     pub nlkm: Option<Vec<u8>>,
     /// DPAPI_SYSTEM raw bytes (from LSA secrets).
     pub dpapi_system_raw: Option<Vec<u8>>,
+    /// Extracted SAM entries (NT hashes) for DPAPI user-level decryption.
+    pub sam_entries: Option<Vec<SamEntry>>,
     /// Decrypted DPAPI keyring.
     pub dpapi_keyring: Option<abyss_crypto::dpapi::DpapiKeyring>,
     /// Raw DPAPI master key files: (SID, GUID, file_data).
@@ -47,6 +50,7 @@ impl ExtractionContext {
             lsa_key: None,
             nlkm: None,
             dpapi_system_raw: None,
+            sam_entries: None,
             dpapi_keyring: None,
             dpapi_master_key_files: Vec::new(),
             browser_data: Vec::new(),

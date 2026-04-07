@@ -18,4 +18,5 @@ aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
 rc4 = "0.1"
 des = "0.8"
+pbkdf2 = { version = "0.12", features = ["hmac"] }
 typenum = "1"

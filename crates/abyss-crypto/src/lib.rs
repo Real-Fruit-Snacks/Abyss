@@ -13,7 +13,10 @@ pub mod sam;
 pub mod syskey;
 
 pub use cached_creds::{CachedCredential, extract_cached_creds};
-pub use dpapi::{DpapiKeyring, decrypt_dpapi_blob};
+pub use dpapi::{
+    DpapiKeyring, MasterKeyFile, decrypt_dpapi_blob, decrypt_master_key_with_hash,
+    decrypt_master_key_with_system, parse_dpapi_system, parse_master_key_file,
+};
 pub use error::CryptoError;
 pub use gpp::decrypt_gpp_password;
 pub use lsa::{LsaSecret, derive_lsa_key, extract_lsa_secrets};

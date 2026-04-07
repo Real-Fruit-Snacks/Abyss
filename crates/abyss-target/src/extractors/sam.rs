@@ -49,6 +49,9 @@ impl Extractor for SamExtractor {
 
         ctx.sam_hive = Some(sam);
 
+        // Store SAM entries for downstream extractors (DPAPI user-level decryption).
+        ctx.sam_entries = Some(entries.clone());
+
         for entry in entries {
             collector.add(Finding::SamHash(SamHashFinding {
                 username: entry.username,

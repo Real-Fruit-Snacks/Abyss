@@ -671,6 +671,97 @@ impl Target {
                 }
             }
 
+            // Scan DPAPI master key files: Users/<user>/AppData/Roaming/Microsoft/Protect/<SID>/<GUID>
+            for user in &candidate_users {
+                let protect_dir = format!(
+                    "Users/{}/AppData/Roaming/Microsoft/Protect",
+                    user
+                );
+                let sid_entries = match ntfs.find_file(&protect_dir) {
+                    Ok(idx) => ntfs.list_directory(idx).unwrap_or_default(),
+                    Err(_) => continue,
+                };
+                for (sid_name, is_dir, _idx) in &sid_entries {
+                    if !is_dir || sid_name == "." || sid_name == ".." || !sid_name.starts_with("S-") {
+                        continue;
+                    }
+                    let sid_dir = format!("{}/{}", protect_dir, sid_name);
+                    let guid_entries = match ntfs.find_file(&sid_dir) {
+                        Ok(idx) => ntfs.list_directory(idx).unwrap_or_default(),
+                        Err(_) => continue,
+                    };
+                    for (guid_name, is_file_dir, _) in &guid_entries {
+                        if *is_file_dir || guid_name == "." || guid_name == ".." || guid_name == "Preferred" {
+                            continue;
+                        }
+                        // GUID filenames are like "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                        if guid_name.len() < 32 {
+                            continue;
+                        }
+                        let mk_path = format!("{}/{}", sid_dir, guid_name);
+                        match ntfs.read_file(&mk_path) {
+                            Ok(data) => {
+                                if data.len() <= MAX_FILE_READ_SIZE as usize {
+                                    log::info!(
+                                        "Found DPAPI master key file: {} ({} bytes)",
+                                        mk_path,
+                                        data.len()
+                                    );
+                                    ctx.dpapi_master_key_files.push((
+                                        sid_name.clone(),
+                                        guid_name.clone(),
+                                        data,
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                log::debug!("Could not read master key file {}: {}", mk_path, e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Also scan SYSTEM profile for machine-level master keys
+            let system_protect_paths = [
+                "Windows/System32/Microsoft/Protect/S-1-5-18/User",
+                "Windows/System32/Microsoft/Protect/S-1-5-18",
+            ];
+            for protect_dir in &system_protect_paths {
+                let entries = match ntfs.find_file(protect_dir) {
+                    Ok(idx) => ntfs.list_directory(idx).unwrap_or_default(),
+                    Err(_) => continue,
+                };
+                for (name, is_dir, _) in &entries {
+                    if *is_dir || name == "." || name == ".." || name == "Preferred" {
+                        continue;
+                    }
+                    if name.len() < 32 {
+                        continue;
+                    }
+                    let mk_path = format!("{}/{}", protect_dir, name);
+                    match ntfs.read_file(&mk_path) {
+                        Ok(data) => {
+                            if data.len() <= MAX_FILE_READ_SIZE as usize {
+                                log::info!(
+                                    "Found SYSTEM DPAPI master key file: {} ({} bytes)",
+                                    mk_path,
+                                    data.len()
+                                );
+                                ctx.dpapi_master_key_files.push((
+                                    "S-1-5-18".to_string(),
+                                    name.clone(),
+                                    data,
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            log::debug!("Could not read system master key file {}: {}", mk_path, e);
+                        }
+                    }
+                }
+            }
+
             // Scan SYSVOL for GPP XML files containing cpassword
             let sysvol_roots = [
                 "Windows/SYSVOL/domain/Policies",
