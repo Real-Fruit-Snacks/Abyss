@@ -13,7 +13,7 @@ use abyss_volume::{discover_partitions, Partition};
 use crate::detect::OsType;
 use crate::error::TargetError;
 use crate::extractor::{ExtractionContext, Extractor};
-use crate::extractors::{BrowserExtractor, CachedCredsExtractor, DpapiExtractor, LinuxCredsExtractor, LsaExtractor, NtdsExtractor, PersistenceExtractor, SamExtractor, SshExtractor};
+use crate::extractors::{BrowserExtractor, CachedCredsExtractor, CloudExtractor, DpapiExtractor, FirefoxExtractor, LinuxCredsExtractor, LsaExtractor, NtdsExtractor, PersistenceExtractor, SamExtractor, SshExtractor};
 
 /// Reader that presents a slice of a SharedBlockDevice as a standalone ReadSeek.
 struct SliceReader {
@@ -328,10 +328,25 @@ impl Target {
                 "etc/shadow",
                 "etc/passwd",
                 "root/.aws/credentials",
+                "root/.aws/config",
                 "root/.git-credentials",
                 "root/.netrc",
                 "root/.docker/config.json",
                 "root/.vnc/passwd",
+                "root/.azure/accessTokens.json",
+                "root/.azure/azureProfile.json",
+                "root/.azure/msal_token_cache.json",
+                "root/.config/gcloud/application_default_credentials.json",
+                "root/.config/gcloud/properties",
+                "root/.config/gh/hosts.yml",
+                "root/.config/hub",
+                "root/.kube/config",
+                "root/.terraform.d/credentials.tfrc.json",
+                "root/.env",
+                "root/.bashrc",
+                "root/.bash_profile",
+                "root/.profile",
+                "root/.zshrc",
             ];
             for path in &linux_paths {
                 if let Ok(data) = ntfs.read_file(path) {
@@ -342,9 +357,24 @@ impl Target {
             // Per-user Linux service files
             let user_rel_paths = [
                 ".aws/credentials",
+                ".aws/config",
                 ".git-credentials",
                 ".netrc",
                 ".docker/config.json",
+                ".azure/accessTokens.json",
+                ".azure/azureProfile.json",
+                ".azure/msal_token_cache.json",
+                ".config/gcloud/application_default_credentials.json",
+                ".config/gcloud/properties",
+                ".config/gh/hosts.yml",
+                ".config/hub",
+                ".kube/config",
+                ".terraform.d/credentials.tfrc.json",
+                ".env",
+                ".bashrc",
+                ".bash_profile",
+                ".profile",
+                ".zshrc",
             ];
             for user in &candidate_users {
                 let home = if user == "root" {
@@ -360,6 +390,29 @@ impl Target {
                 }
             }
 
+            // Windows-specific cloud config paths
+            let win_cloud_rel_paths = [
+                ".aws/credentials",
+                ".aws/config",
+                ".azure/accessTokens.json",
+                ".azure/azureProfile.json",
+                ".azure/msal_token_cache.json",
+                "AppData/Roaming/gcloud/application_default_credentials.json",
+                "AppData/Roaming/gcloud/properties",
+                ".config/gh/hosts.yml",
+                ".docker/config.json",
+                ".kube/config",
+                ".terraform.d/credentials.tfrc.json",
+            ];
+            for user in &candidate_users {
+                for rel in &win_cloud_rel_paths {
+                    let full = format!("Users/{}/{}", user, rel);
+                    if let Ok(data) = ntfs.read_file(&full) {
+                        ctx.filesystem_files.insert(full, data);
+                    }
+                }
+            }
+
             // WireGuard configs — try to list etc/wireguard/
             if let Ok(wg_idx) = ntfs.find_file("etc/wireguard") {
                 if let Ok(entries) = ntfs.list_directory(wg_idx) {
@@ -368,6 +421,97 @@ impl Target {
                             let path = format!("etc/wireguard/{}", name);
                             if let Ok(data) = ntfs.read_file(&path) {
                                 ctx.filesystem_files.insert(path, data);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Firefox profile discovery (Windows)
+            for user in &candidate_users {
+                let profiles_dir = format!(
+                    "Users/{}/AppData/Roaming/Mozilla/Firefox/Profiles",
+                    user
+                );
+                if let Ok(profiles_idx) = ntfs.find_file(&profiles_dir) {
+                    if let Ok(entries) = ntfs.list_directory(profiles_idx) {
+                        for (profile_name, is_dir, _idx) in entries {
+                            if !is_dir
+                                || profile_name == "."
+                                || profile_name == ".."
+                            {
+                                continue;
+                            }
+                            let key4_path = format!(
+                                "{}/{}/key4.db",
+                                profiles_dir, profile_name
+                            );
+                            let logins_path = format!(
+                                "{}/{}/logins.json",
+                                profiles_dir, profile_name
+                            );
+                            let key4 = ntfs.read_file(&key4_path);
+                            let logins = ntfs.read_file(&logins_path);
+                            if let (Ok(key4_data), Ok(logins_data)) =
+                                (key4, logins)
+                            {
+                                log::info!(
+                                    "Found Firefox profile for {}: {}",
+                                    user,
+                                    profile_name
+                                );
+                                ctx.firefox_profiles.push((
+                                    user.clone(),
+                                    key4_data,
+                                    logins_data,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Firefox profile discovery (Linux paths on NTFS)
+            for user in &candidate_users {
+                let home = if user == "root" {
+                    "root".to_string()
+                } else {
+                    format!("home/{}", user)
+                };
+                let profiles_dir =
+                    format!("{}/.mozilla/firefox", home);
+                if let Ok(profiles_idx) = ntfs.find_file(&profiles_dir) {
+                    if let Ok(entries) = ntfs.list_directory(profiles_idx) {
+                        for (profile_name, is_dir, _idx) in entries {
+                            if !is_dir
+                                || profile_name == "."
+                                || profile_name == ".."
+                            {
+                                continue;
+                            }
+                            let key4_path = format!(
+                                "{}/{}/key4.db",
+                                profiles_dir, profile_name
+                            );
+                            let logins_path = format!(
+                                "{}/{}/logins.json",
+                                profiles_dir, profile_name
+                            );
+                            let key4 = ntfs.read_file(&key4_path);
+                            let logins = ntfs.read_file(&logins_path);
+                            if let (Ok(key4_data), Ok(logins_data)) =
+                                (key4, logins)
+                            {
+                                log::info!(
+                                    "Found Firefox profile for {}: {}",
+                                    user,
+                                    profile_name
+                                );
+                                ctx.firefox_profiles.push((
+                                    user.clone(),
+                                    key4_data,
+                                    logins_data,
+                                ));
                             }
                         }
                     }
@@ -443,8 +587,23 @@ impl Target {
         // Linux credential files
         let linux_paths = [
             "etc/shadow", "etc/passwd",
-            "root/.aws/credentials", "root/.git-credentials",
+            "root/.aws/credentials", "root/.aws/config",
+            "root/.git-credentials",
             "root/.netrc", "root/.docker/config.json", "root/.vnc/passwd",
+            "root/.azure/accessTokens.json",
+            "root/.azure/azureProfile.json",
+            "root/.azure/msal_token_cache.json",
+            "root/.config/gcloud/application_default_credentials.json",
+            "root/.config/gcloud/properties",
+            "root/.config/gh/hosts.yml",
+            "root/.config/hub",
+            "root/.kube/config",
+            "root/.terraform.d/credentials.tfrc.json",
+            "root/.env",
+            "root/.bashrc",
+            "root/.bash_profile",
+            "root/.profile",
+            "root/.zshrc",
         ];
         for path in &linux_paths {
             if let Ok(data) = extfs.read_file(path) {
@@ -453,7 +612,27 @@ impl Target {
         }
 
         // Per-user service files
-        let user_rel_paths = [".aws/credentials", ".git-credentials", ".netrc", ".docker/config.json"];
+        let user_rel_paths = [
+            ".aws/credentials",
+            ".aws/config",
+            ".git-credentials",
+            ".netrc",
+            ".docker/config.json",
+            ".azure/accessTokens.json",
+            ".azure/azureProfile.json",
+            ".azure/msal_token_cache.json",
+            ".config/gcloud/application_default_credentials.json",
+            ".config/gcloud/properties",
+            ".config/gh/hosts.yml",
+            ".config/hub",
+            ".kube/config",
+            ".terraform.d/credentials.tfrc.json",
+            ".env",
+            ".bashrc",
+            ".bash_profile",
+            ".profile",
+            ".zshrc",
+        ];
         for user in &candidate_users {
             let home = if user == "root" { "root".to_string() } else { format!("home/{}", user) };
             for rel in &user_rel_paths {
@@ -472,6 +651,46 @@ impl Target {
                         let path = format!("etc/wireguard/{}", entry.name);
                         if let Ok(data) = extfs.read_file(&path) {
                             ctx.filesystem_files.insert(path, data);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Firefox profile discovery (Linux)
+        for user in &candidate_users {
+            let home = if user == "root" {
+                "root".to_string()
+            } else {
+                format!("home/{}", user)
+            };
+            let profiles_dir = format!("{}/.mozilla/firefox", home);
+            if let Ok((profiles_ino, _)) = extfs.find_file(&profiles_dir) {
+                if let Ok(entries) = extfs.list_directory(profiles_ino) {
+                    for entry in entries {
+                        if entry.file_type != abyss_extfs::dir::ExtFileType::Directory
+                            || entry.name == "."
+                            || entry.name == ".."
+                        {
+                            continue;
+                        }
+                        let key4_path =
+                            format!("{}/{}/key4.db", profiles_dir, entry.name);
+                        let logins_path =
+                            format!("{}/{}/logins.json", profiles_dir, entry.name);
+                        let key4 = extfs.read_file(&key4_path);
+                        let logins = extfs.read_file(&logins_path);
+                        if let (Ok(key4_data), Ok(logins_data)) = (key4, logins) {
+                            log::info!(
+                                "Found Firefox profile for {}: {}",
+                                user,
+                                entry.name
+                            );
+                            ctx.firefox_profiles.push((
+                                user.clone(),
+                                key4_data,
+                                logins_data,
+                            ));
                         }
                     }
                 }
@@ -498,9 +717,11 @@ impl Target {
             Box::new(CachedCredsExtractor),
             Box::new(DpapiExtractor),
             Box::new(BrowserExtractor),
+            Box::new(FirefoxExtractor),
             Box::new(SshExtractor),
             Box::new(LinuxCredsExtractor),
             Box::new(PersistenceExtractor),
+            Box::new(CloudExtractor),
         ];
 
         for extractor in &extractors {
