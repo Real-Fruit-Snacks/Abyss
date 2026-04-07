@@ -68,5 +68,9 @@ impl Seek for SharedBlockDevice {
     }
 }
 
-// SharedBlockDevice is Send because Arc<Mutex<>> is Send.
-unsafe impl Send for SharedBlockDevice {}
+// Static assertion: SharedBlockDevice is Send via Arc<Mutex<BlockDevice: Send>>.
+#[allow(dead_code)]
+const _: () = {
+    fn assert_send<T: Send>() {}
+    fn check() { assert_send::<SharedBlockDevice>(); }
+};
