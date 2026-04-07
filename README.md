@@ -1,228 +1,165 @@
-# Abyss
+<div align="center">
 
-> **Status: Under Active Development** — Core functionality works but parsers are being validated against real-world forensic artifacts. NTDS.dit hash extraction from Server 2016+ databases is in progress. Expect breaking changes before v1.0.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Real-Fruit-Snacks/Abyss/master/docs/assets/logo-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/Real-Fruit-Snacks/Abyss/master/docs/assets/logo-light.svg">
+  <img alt="Abyss" src="https://raw.githubusercontent.com/Real-Fruit-Snacks/Abyss/master/docs/assets/logo-dark.svg" width="520">
+</picture>
 
-Offensive disk, memory, and Active Directory analysis framework written in Rust.
+![Rust](https://img.shields.io/badge/language-Rust-orange.svg)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-Abyss extracts credentials, keys, and persistence mechanisms from forensic disk images and memory dumps — fast, offline, and without external dependencies.
+**Offensive disk, memory, and Active Directory analysis framework.**
 
-## Features
+Extract credentials, keys, and persistence mechanisms from forensic disk images and memory dumps. SAM hashes, NTDS.dit domain dumps, LSA secrets, DPAPI keys, browser passwords, SSH keys, cloud credentials, and LSASS minidumps. Raw, E01, and VMDK formats with NTFS and ext4 support.
 
-### Disk Image Formats
-- **Raw** — bare sector dumps
-- **E01** (EnCase) — auto-detected
-- **VMDK** (VMware sparse) — auto-detected
+> **Authorization Required**: Designed exclusively for authorized security testing with explicit written permission.
+>
+> **Under Active Development**: Core functionality works but parsers are being validated against real-world artifacts. Expect breaking changes before v1.0.
 
-### Partition Schemes
-- MBR and GPT — auto-detected
-
-### Filesystems
-- NTFS
-- ext2/3/4
-
-### Credential Extraction
-- **Windows SAM** — NTLM and LM hashes for local accounts
-- **LSA Secrets** — service account passwords, cached tokens
-- **Cached Domain Credentials** — DCC2 hashes (mode 2100)
-- **DPAPI Master Keys** — Windows Data Protection API keys
-- **Active Directory (NTDS.dit)** — full domain hash dump with password history (PEK v2 RC4 + v3 AES)
-- **Browser — Chromium** — saved passwords via DPAPI decryption
-- **Browser — Firefox** — saved passwords via key4.db + logins.json
-- **Linux /etc/shadow and /etc/passwd** — all shadow entries
-- **Service credentials** — credentials embedded in service configs
-- **SSH** — private keys, authorized_keys, host keys
-- **Cloud** — AWS, Azure, GCP, GitHub, Docker, Kubernetes, Terraform, git credentials
-
-### Memory Analysis
-- LSASS minidump credential extraction
-- MSV1_0 / NTLM credential packages
-- Wdigest plaintext credential scanning
-
-### Persistence
-- Windows services
-- BootExecute entries
-- Image File Execution Options (IFEO) debugger hijacks
-
-### Output
-- **Text** — human-readable colored output
-- **JSON** — line-delimited, one finding per line
-- **Hashcat** — ready-to-crack format for modes 1000, 2100, and shadow auto-detection
+</div>
 
 ---
 
-## Installation
+## Quick Start
 
-### From source
+**Prerequisites:** Rust 1.70+
+
 ```bash
-git clone https://github.com/Real-Fruit-Snacks/abyss.git
-cd abyss
+git clone https://github.com/Real-Fruit-Snacks/Abyss.git
+cd Abyss
 cargo build --release
 ```
 
-The binary will be at `target/release/abyss` (or `abyss.exe` on Windows).
+**Analyze a disk image:**
 
-### Requirements
-- Rust 1.70+ (for building from source)
-- No runtime dependencies
+```bash
+abyss image disk.img                    # full analysis
+abyss image disk.img --creds            # credentials only
+abyss image disk.img --output hashcat   # hashcat-ready output
+```
 
 ---
 
-## Usage
+## Features
 
-### Analyze a disk image
+### Credential Extraction
+
+SAM hashes, NTDS.dit domain dumps (PEK v2 RC4 + v3 AES), LSA secrets, cached domain credentials (DCC2), DPAPI master keys.
+
 ```bash
-# Full analysis (all extractors)
-abyss image disk.img
-
-# Extract only credentials
 abyss image disk.img --creds
-
-# Extract only SSH/cloud keys
-abyss image disk.img --keys
-
-# Extract only persistence mechanisms
-abyss image disk.img --persist
-
-# JSON output for processing
-abyss image disk.img --output json
-
-# Hashcat-compatible output
-abyss image disk.img --output hashcat
-
-# Filter specific finding types
-abyss image disk.img --filter sam_hash,ntds_hash
-
-# Quiet mode (suppress banner and progress)
-abyss image disk.img --quiet
-
-# Verbose logging
-abyss image disk.img --verbose
+abyss image disk.img --output hashcat   # mode 1000, 2100, shadow
 ```
 
-### Analyze E01 or VMDK images
-```bash
-# E01 (EnCase) images — auto-detected by header
-abyss image evidence.E01
+### Browser Passwords
 
-# VMDK (VMware) images — auto-detected by header
-abyss image server.vmdk
+Chromium saved passwords via DPAPI decryption. Firefox via key4.db + logins.json.
+
+```bash
+abyss image disk.img --filter browser_credential
 ```
 
-### Analyze memory dumps
+### Memory Analysis
+
+LSASS minidump credential extraction. MSV1_0/NTLM credential packages. Wdigest plaintext scanning.
+
 ```bash
-# Extract credentials from LSASS minidump
 abyss memory lsass.dmp
 ```
 
-### Interactive filesystem shell
+### Disk Image Formats
+
+Raw sector dumps, E01 (EnCase), and VMDK (VMware sparse). Auto-detected by header.
+
+```bash
+abyss image evidence.E01
+abyss image server.vmdk
+```
+
+### SSH and Cloud Keys
+
+Private keys, authorized_keys, host keys. AWS, Azure, GCP, GitHub, Docker, Kubernetes, Terraform credentials.
+
+```bash
+abyss image disk.img --keys
+```
+
+### Persistence Detection
+
+Windows services, BootExecute entries, Image File Execution Options debugger hijacks.
+
+```bash
+abyss image disk.img --persist
+```
+
+### Interactive Shell
+
+Filesystem browser for manual investigation. List, cat, hexdump, hash, and extract files.
+
 ```bash
 abyss shell disk.img
 ```
 
-Shell commands:
+### Output Formats
 
-| Command | Description |
-|---------|-------------|
-| `ls [path]` | List directory contents |
-| `cat <path>` | Print file contents |
-| `hexdump <path>` | Hex dump (first 512 bytes) |
-| `hash <path>` | Compute MD5 + SHA-256 |
-| `save <src> <dst>` | Extract file to local disk |
-| `info` | Display target metadata |
-| `volumes` | List partitions |
+Text (colored), JSON (line-delimited), and Hashcat (modes 1000, 2100, shadow auto-detect).
 
-### Display image metadata
 ```bash
-abyss info disk.img
+abyss image disk.img --output json --filter sam_hash,ntds_hash
 ```
 
 ---
 
 ## Architecture
 
-Abyss is a modular Rust workspace with 13 crates:
-
-| Crate | Purpose |
-|-------|---------|
-| `abyss-cli` | Command-line interface |
-| `abyss-cstruct` | Binary struct parsing primitives |
-| `abyss-container` | Disk image containers (Raw, E01, VMDK) |
-| `abyss-volume` | Partition table parsing (MBR, GPT) |
-| `abyss-ntfs` | NTFS filesystem parser |
-| `abyss-extfs` | ext2/3/4 filesystem parser |
-| `abyss-registry` | Windows registry hive parser |
-| `abyss-ese` | ESE/JET database parser (NTDS.dit) |
-| `abyss-crypto` | Credential decryption (SAM, LSA, NTDS, DPAPI) |
-| `abyss-browser` | Browser credential extraction (Chromium, Firefox) |
-| `abyss-memory` | Memory dump analysis (minidumps, LSASS) |
-| `abyss-target` | Target abstraction and extraction pipeline |
-| `abyss-output` | Finding types and output formatters |
-
-### Pipeline
-
 ```
-Disk Image → Container (Raw/E01/VMDK)
-  → Volume (MBR/GPT)
-    → Filesystem (NTFS/ext4)
-      → Extractors → Findings → Output
+crates/
+├── abyss-cli/        # Command-line interface
+├── abyss-container/   # Disk image containers (Raw, E01, VMDK)
+├── abyss-volume/      # Partition tables (MBR, GPT)
+├── abyss-ntfs/        # NTFS filesystem parser
+├── abyss-extfs/       # ext2/3/4 filesystem parser
+├── abyss-registry/    # Windows registry hive parser
+├── abyss-ese/         # ESE/JET database parser (NTDS.dit)
+├── abyss-crypto/      # Credential decryption (SAM, LSA, NTDS, DPAPI)
+├── abyss-browser/     # Browser credential extraction
+├── abyss-memory/      # Memory dump analysis (LSASS)
+├── abyss-target/      # Extraction pipeline orchestration
+├── abyss-output/      # Finding types and output formatters
+└── abyss-cstruct/     # Binary struct parsing primitives
 ```
+
+Pipeline architecture: Disk Image to Container (Raw/E01/VMDK) to Volume (MBR/GPT) to Filesystem (NTFS/ext4) to Extractors to Findings to Output. 13-crate Cargo workspace with each crate owning a single responsibility.
 
 ---
 
-## Output Formats
+## Platform Support
 
-### Text (default)
-Human-readable colored output with `[SAM]`, `[NTDS]`, `[LSA]`, `[BROWSER]`, etc. prefixes.
-
-### JSON (`--output json`)
-Line-delimited JSON — one finding per line with a `type` discriminator:
-```json
-{"type":"sam_hash","username":"Administrator","rid":500,"nt_hash":"aad3b435b51404eeaad3b435b51404ee","lm_hash":"aad3b435b51404eeaad3b435b51404ee"}
-{"type":"ntds_hash","username":"jsmith","rid":1105,"nt_hash":"8846f7eaee8fb117ad06bdd830b7586c","lm_hash":"aad3b435b51404eeaad3b435b51404ee"}
-{"type":"browser_credential","browser":"Chrome","url":"https://example.com","username":"user@example.com","password":"hunter2"}
-```
-
-### Hashcat (`--output hashcat`)
-Ready for cracking:
-- SAM/NTDS hashes — mode 1000 (`username:rid:lm_hash:nt_hash:::`)
-- Cached domain credentials — mode 2100 (`$DCC2$iterations#username#hash`)
-- Shadow entries — auto-detected mode based on hash prefix (`$1$`, `$6$`, etc.)
+| | Linux | Windows |
+|---|---|---|
+| Disk Image Analysis | Full | Full |
+| Memory Analysis | Full | Full |
+| NTFS Parsing | Full | Full |
+| ext4 Parsing | Full | Full |
+| Interactive Shell | Full | Full |
+| Hashcat Output | Full | Full |
 
 ---
 
-## Finding Types
+## Security
 
-Use with `--filter` (comma-separated) to restrict output to specific finding types:
+Report vulnerabilities via [GitHub Security Advisories](https://github.com/Real-Fruit-Snacks/Abyss/security/advisories). 90-day responsible disclosure.
 
-| Type | Description |
-|------|-------------|
-| `target_info` | System metadata (always included) |
-| `sam_hash` | Windows SAM hashes |
-| `ntds_hash` | NTDS.dit domain hashes |
-| `lsa_secret` | LSA secrets |
-| `dcc2` | Cached domain credentials |
-| `dpapi_master_key` | DPAPI master keys |
-| `browser_credential` | Browser saved passwords |
-| `ssh_private_key` | SSH private keys |
-| `ssh_authorized_key` | SSH authorized_keys entries |
-| `shadow_entry` | Linux /etc/shadow entries |
-| `service_credential` | Service account credentials |
-| `persistence_entry` | Persistence mechanisms |
-| `cloud_credential` | Cloud provider credentials |
-| `memory_credential` | Memory dump credentials |
-
----
-
-## Security Considerations
-
-- **This is an offensive tool.** Only use on systems you own or have explicit written authorization to analyze.
-- Extracted credentials are printed to stdout. Pipe to a file and protect it with appropriate permissions.
-- The tool operates read-only on disk images — it never modifies the source image.
-- Decrypted credentials are held in process memory until exit. No automatic scrubbing is performed.
-- Firefox profiles protected by a master password will be detected and skipped with a warning.
+**Abyss does not:**
+- Modify source disk images (read-only analysis)
+- Provide remote access or C2 capabilities (not an implant)
+- Crack extracted hashes (use Hashcat for that)
+- Automatically scrub credentials from process memory
 
 ---
 
 ## License
 
-MIT
+[MIT](LICENSE) — Copyright 2026 Real-Fruit-Snacks

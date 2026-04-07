@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 110" fill="none">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#94e2d5"/>
+      <stop offset="50%" stop-color="#89dceb"/>
+      <stop offset="100%" stop-color="#a6e3a1"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="40%" r="40%">
+      <stop offset="0%" stop-color="#94e2d5" stop-opacity="0.1"/>
+      <stop offset="50%" stop-color="#89dceb" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#a6e3a1" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="textglow">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+  <ellipse cx="210" cy="45" rx="160" ry="40" fill="url(#glow)"/>
+  <text x="210" y="52" text-anchor="middle" font-family="'Inter', 'SF Pro Display', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="52" font-weight="800" fill="url(#grad)" letter-spacing="6" filter="url(#textglow)">ABYSS</text>
+  <line x1="125" y1="68" x2="295" y2="68" stroke="url(#grad)" stroke-width="0.6" opacity="0.2"/>
+  <text x="210" y="84" text-anchor="middle" font-family="'JetBrains Mono', 'SF Mono', 'Fira Code', 'Cascadia Code', monospace" font-size="10" font-weight="400" fill="#7f849c" letter-spacing="5">OFFENSIVE FORENSIC ANALYSIS</text>
+  <text x="210" y="100" text-anchor="middle" font-family="'JetBrains Mono', 'SF Mono', 'Fira Code', monospace" font-size="7.5" font-weight="400" fill="#585b70" letter-spacing="3">RUST  ·  DISK  ·  MEMORY  ·  CREDENTIALS  ·  ZERO-DEP</text>
+</svg>

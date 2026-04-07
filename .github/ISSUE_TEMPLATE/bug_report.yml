@@ -1,0 +1,46 @@
+name: Bug Report
+description: Report a bug in Abyss
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Disk Image Parsing (Raw/E01/VMDK)
+        - Filesystem (NTFS/ext4)
+        - Credential Extraction (SAM/NTDS/LSA)
+        - Browser Passwords
+        - Memory Analysis
+        - Persistence Detection
+        - Interactive Shell
+        - Output Formatters
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+  - type: input
+    id: version
+    attributes:
+      label: Abyss Version
