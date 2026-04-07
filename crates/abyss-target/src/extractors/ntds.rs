@@ -27,7 +27,7 @@ const COL_PEK_LIST: &str = "ATTk589918";
 /// NTDS datatable column name for SAM account type.
 const COL_SAM_ACCOUNT_TYPE: &str = "ATTb590606";
 /// NTDS datatable column name for ntPwdHistory (NT hash history).
-const COL_NT_HASH_HISTORY: &str = "ATTk589918";
+const COL_NT_HASH_HISTORY: &str = "ATTk589920";
 /// NTDS datatable column name for lmPwdHistory (LM hash history).
 const COL_LM_HASH_HISTORY: &str = "ATTk589984";
 
@@ -109,6 +109,8 @@ impl Extractor for NtdsExtractor {
         let uac_id = col_id(COL_USER_ACCOUNT_CONTROL);
         let pek_list_id = col_id(COL_PEK_LIST);
         let sam_type_id = col_id(COL_SAM_ACCOUNT_TYPE);
+        let nt_history_id = col_id(COL_NT_HASH_HISTORY);
+        let lm_history_id = col_id(COL_LM_HASH_HISTORY);
 
         // We need at least the SAM account name and PEK list columns.
         let sam_name_id = match sam_name_id {
@@ -264,6 +266,37 @@ impl Extractor for NtdsExtractor {
                 EMPTY_HASH.to_string()
             };
 
+            // Decrypt NT hash history.
+            let history: Vec<String> = nt_history_id
+                .and_then(|id| record.get(id))
+                .map(|enc| {
+                    match decrypt_ntds_hash_history(enc, &pek, rid) {
+                        Ok(hashes) => hashes.into_iter().map(|h| hex_encode(&h)).collect(),
+                        Err(e) => {
+                            log::debug!(
+                                "NTDS: failed to decrypt NT hash history for {}: {}",
+                                username,
+                                e
+                            );
+                            vec![]
+                        }
+                    }
+                })
+                .unwrap_or_default();
+
+            // Log LM history decode failures but don't store (NT history is sufficient).
+            if let Some(lm_id) = lm_history_id {
+                if let Some(enc) = record.get(lm_id) {
+                    if let Err(e) = decrypt_ntds_hash_history(enc, &pek, rid) {
+                        log::debug!(
+                            "NTDS: failed to decrypt LM hash history for {}: {}",
+                            username,
+                            e
+                        );
+                    }
+                }
+            }
+
             collector.add(Finding::NtdsHash(NtdsHashFinding {
                 domain: domain.clone(),
                 username,
@@ -271,6 +304,7 @@ impl Extractor for NtdsExtractor {
                 nt_hash,
                 lm_hash,
                 enabled,
+                history,
             }));
             count += 1;
         }

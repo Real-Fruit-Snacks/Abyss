@@ -113,6 +113,7 @@ pub struct NtdsHashFinding {
     pub nt_hash: String,
     pub lm_hash: String,
     pub enabled: bool,
+    pub history: Vec<String>,  // NT hash history entries (hex-encoded)
 }
 
 #[derive(Debug, Clone, Serialize)]

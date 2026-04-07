@@ -188,6 +188,56 @@ fn aes_256_cbc_decrypt(key: &[u8; 32], iv: &[u8], data: &[u8]) -> Result<Vec<u8>
     Ok(decrypted.to_vec())
 }
 
+/// Decrypt an NTDS password hash history blob using the PEK and RID.
+///
+/// The history blob format is the same as a single hash but the RC4-decrypted
+/// payload contains multiple concatenated 16-byte hashes:
+///   `[header:8][key_material:16][enc_hash1:16][enc_hash2:16]...`
+///
+/// Decryption steps:
+///   1. RC4 key = MD5(PEK + key_material)
+///   2. RC4 decrypt the entire payload after the 8-byte header
+///   3. Split result into 16-byte chunks, DES-decrypt each with the RID
+///
+/// Returns an empty Vec if the blob is too short to contain any entries.
+pub fn decrypt_ntds_hash_history(
+    encrypted: &[u8],
+    pek: &[u8],
+    rid: u32,
+) -> Result<Vec<Vec<u8>>, CryptoError> {
+    if encrypted.len() < 40 {
+        // Need at least header(8) + key_material(16) + one hash(16).
+        return Ok(vec![]);
+    }
+
+    let key_material = &encrypted[8..24];
+    let enc_payload = &encrypted[24..];
+
+    // RC4 key = MD5(PEK + key_material)
+    let mut hasher = md5::Md5::new();
+    hasher.update(pek);
+    hasher.update(key_material);
+    let rc4_key = hasher.finalize();
+
+    let mut data = enc_payload.to_vec();
+    let mut rc4: Rc4<U16> = Rc4KeyInit::new(rc4_key.as_slice().into());
+    rc4.apply_keystream(&mut data);
+
+    // Each 16-byte chunk is a DES-encrypted hash entry.
+    let mut hashes = Vec::new();
+    for chunk in data.chunks(16) {
+        if chunk.len() < 16 {
+            break;
+        }
+        match des_decrypt_hash(chunk, rid) {
+            Ok(h) if h.len() == 16 => hashes.push(h),
+            _ => {}
+        }
+    }
+
+    Ok(hashes)
+}
+
 /// Decrypt an NTDS hash (NT or LM) using the PEK and RID.
 ///
 /// The encrypted hash blob format (version 1):

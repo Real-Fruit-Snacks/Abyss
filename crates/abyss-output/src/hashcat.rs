@@ -35,6 +35,14 @@ pub fn emit_hashcat(findings: &[Finding], writer: &mut dyn Write) -> Result<(), 
                     "{}\\{}:{}:{}:{}:::",
                     h.domain, h.username, h.rid, h.lm_hash, h.nt_hash
                 )?;
+                // History entries: one line per hash, mode 1000
+                for (i, hist_hash) in h.history.iter().enumerate() {
+                    writeln!(
+                        writer,
+                        "{}\\{}_history_{}:{}:{}:{}:::",
+                        h.domain, h.username, i + 1, h.rid, h.lm_hash, hist_hash
+                    )?;
+                }
             }
             Finding::MemoryCredential(m) => {
                 // Mode 1000: NT hash

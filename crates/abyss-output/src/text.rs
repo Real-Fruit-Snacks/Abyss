@@ -169,6 +169,17 @@ pub fn emit_text(findings: &[Finding], writer: &mut dyn Write) -> Result<(), Out
                     h.lm_hash,
                     status
                 )?;
+                if !h.history.is_empty() {
+                    writeln!(
+                        writer,
+                        "  {} history ({}):",
+                        "[NTDS-HIST]".bold().yellow(),
+                        h.history.len()
+                    )?;
+                    for (i, hist_hash) in h.history.iter().enumerate() {
+                        writeln!(writer, "    [{}] {}", i + 1, hist_hash)?;
+                    }
+                }
             }
             Finding::CloudCredential(c) => {
                 let user_str = c.user.as_deref().unwrap_or("");

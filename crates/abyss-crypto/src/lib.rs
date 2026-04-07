@@ -15,6 +15,6 @@ pub use cached_creds::{CachedCredential, extract_cached_creds};
 pub use dpapi::{DpapiKeyring, decrypt_dpapi_blob};
 pub use error::CryptoError;
 pub use lsa::{LsaSecret, derive_lsa_key, extract_lsa_secrets};
-pub use ntds::{decrypt_ntds_hash, decrypt_pek};
+pub use ntds::{decrypt_ntds_hash, decrypt_ntds_hash_history, decrypt_pek};
 pub use sam::{SamEntry, extract_sam_hashes};
 pub use syskey::derive_syskey;
