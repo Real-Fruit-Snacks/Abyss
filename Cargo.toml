@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/abyss-cli",
+    "crates/abyss-output",
+    "crates/abyss-cstruct",
+    "crates/abyss-image",
+    "crates/abyss-ntfs",
+    "crates/abyss-registry",
+    "crates/abyss-evtx",
+    "crates/abyss-ad",
+    "crates/abyss-mem",
+]
+
+[workspace.dependencies]
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# CLI
+clap = { version = "4", features = ["derive", "color"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Terminal output
+colored = "2"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# I/O
+byteorder = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

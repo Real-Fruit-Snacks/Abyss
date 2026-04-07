@@ -1,0 +1,8 @@
+[package]
+name = "abyss-cstruct"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = { workspace = true }
+byteorder = { workspace = true }

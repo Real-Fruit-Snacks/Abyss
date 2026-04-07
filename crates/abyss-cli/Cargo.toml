@@ -1,0 +1,16 @@
+[package]
+name = "abyss-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "abyss"
+path = "src/main.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+colored = { workspace = true }
+env_logger = { workspace = true }
+abyss-output = { path = "../abyss-output" }
