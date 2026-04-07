@@ -6,6 +6,7 @@ pub mod attribute;
 pub mod boot;
 pub mod datarun;
 pub mod error;
+pub mod filename;
 pub mod index;
 pub mod mft;
 pub mod ntfs;
