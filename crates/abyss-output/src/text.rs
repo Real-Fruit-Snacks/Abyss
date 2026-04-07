@@ -224,6 +224,36 @@ pub fn emit_text(findings: &[Finding], writer: &mut dyn Write) -> Result<(), Out
                     g.source_path
                 )?;
             }
+            Finding::CredentialManager(c) => {
+                let pass_str = c.password.as_deref().unwrap_or("(encrypted)");
+                writeln!(
+                    writer,
+                    "{} {}: {} / {} ({})",
+                    "[CREDMGR]".bold().green(),
+                    c.target,
+                    c.username,
+                    pass_str,
+                    c.user
+                )?;
+            }
+            Finding::Certificate(cert) => {
+                let pk_label = if cert.has_private_key {
+                    "has_private_key".green().to_string()
+                } else {
+                    "no_private_key".dimmed().to_string()
+                };
+                let user_str = cert.user.as_deref().unwrap_or("");
+                writeln!(
+                    writer,
+                    "{} {} ({}) thumbprint={} [{}] ({})",
+                    "[CERT]".bold().cyan(),
+                    cert.subject,
+                    cert.issuer,
+                    cert.thumbprint,
+                    pk_label,
+                    user_str
+                )?;
+            }
         }
     }
     Ok(())

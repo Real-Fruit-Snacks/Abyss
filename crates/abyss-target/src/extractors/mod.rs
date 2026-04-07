@@ -2,7 +2,9 @@
 
 pub mod browser;
 pub mod cached_creds;
+pub mod certs;
 pub mod cloud;
+pub mod credmgr;
 pub mod dpapi;
 pub mod firefox;
 pub mod gpp;
@@ -15,7 +17,9 @@ pub mod ssh;
 
 pub use browser::BrowserExtractor;
 pub use cached_creds::CachedCredsExtractor;
+pub use certs::CertExtractor;
 pub use cloud::CloudExtractor;
+pub use credmgr::CredMgrExtractor;
 pub use dpapi::DpapiExtractor;
 pub use firefox::FirefoxExtractor;
 pub use gpp::GppExtractor;

@@ -17,7 +17,7 @@ use abyss_volume::{discover_partitions, Partition};
 use crate::detect::OsType;
 use crate::error::TargetError;
 use crate::extractor::{ExtractionContext, Extractor};
-use crate::extractors::{BrowserExtractor, CachedCredsExtractor, CloudExtractor, DpapiExtractor, FirefoxExtractor, GppExtractor, LinuxCredsExtractor, LsaExtractor, NtdsExtractor, PersistenceExtractor, SamExtractor, SshExtractor};
+use crate::extractors::{BrowserExtractor, CachedCredsExtractor, CertExtractor, CloudExtractor, CredMgrExtractor, DpapiExtractor, FirefoxExtractor, GppExtractor, LinuxCredsExtractor, LsaExtractor, NtdsExtractor, PersistenceExtractor, SamExtractor, SshExtractor};
 
 /// Reader that presents a slice of a SharedBlockDevice as a standalone ReadSeek.
 struct SliceReader {
@@ -762,6 +762,117 @@ impl Target {
                 }
             }
 
+            // Scan Credential Manager files: Users/<user>/AppData/Local/Microsoft/Credentials/<GUID>
+            for user in &candidate_users {
+                let cred_dir = format!("Users/{}/AppData/Local/Microsoft/Credentials", user);
+                if let Ok(idx) = ntfs.find_file(&cred_dir) {
+                    if let Ok(entries) = ntfs.list_directory(idx) {
+                        for (name, is_dir, _) in entries {
+                            if !is_dir && name != "." && name != ".." {
+                                let path = format!("{}/{}", cred_dir, name);
+                                if let Ok(data) = ntfs.read_file(&path) {
+                                    if data.len() <= MAX_FILE_READ_SIZE as usize {
+                                        log::info!(
+                                            "Found Credential Manager file: {} ({} bytes)",
+                                            path,
+                                            data.len()
+                                        );
+                                        ctx.filesystem_files.entry(path).or_insert(data);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Scan for certificates in Windows certificate store
+            for user in &candidate_users {
+                let cert_dir = format!(
+                    "Users/{}/AppData/Roaming/Microsoft/SystemCertificates/My/Certificates",
+                    user
+                );
+                if let Ok(idx) = ntfs.find_file(&cert_dir) {
+                    if let Ok(entries) = ntfs.list_directory(idx) {
+                        for (name, is_dir, _) in entries {
+                            if !is_dir && name != "." && name != ".." {
+                                let path = format!("{}/{}", cert_dir, name);
+                                if let Ok(data) = ntfs.read_file(&path) {
+                                    if data.len() <= MAX_FILE_READ_SIZE as usize {
+                                        log::info!(
+                                            "Found certificate: {} ({} bytes)",
+                                            path,
+                                            data.len()
+                                        );
+                                        ctx.filesystem_files.entry(path).or_insert(data);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Scan for private key containers (DPAPI-encrypted RSA keys)
+            for user in &candidate_users {
+                let crypto_dir = format!(
+                    "Users/{}/AppData/Roaming/Microsoft/Crypto/RSA",
+                    user
+                );
+                if let Ok(idx) = ntfs.find_file(&crypto_dir) {
+                    if let Ok(sid_entries) = ntfs.list_directory(idx) {
+                        for (sid_name, is_dir, _) in sid_entries {
+                            if !is_dir || sid_name == "." || sid_name == ".." {
+                                continue;
+                            }
+                            let sid_dir = format!("{}/{}", crypto_dir, sid_name);
+                            if let Ok(sid_idx) = ntfs.find_file(&sid_dir) {
+                                if let Ok(key_entries) = ntfs.list_directory(sid_idx) {
+                                    for (key_name, key_is_dir, _) in key_entries {
+                                        if key_is_dir || key_name == "." || key_name == ".." {
+                                            continue;
+                                        }
+                                        let path = format!("{}/{}", sid_dir, key_name);
+                                        if let Ok(data) = ntfs.read_file(&path) {
+                                            if data.len() <= MAX_FILE_READ_SIZE as usize {
+                                                log::info!(
+                                                    "Found private key container: {} ({} bytes)",
+                                                    path,
+                                                    data.len()
+                                                );
+                                                ctx.filesystem_files.entry(path).or_insert(data);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Scan machine-level private key containers
+            let machine_keys_dir = "ProgramData/Microsoft/Crypto/RSA/MachineKeys";
+            if let Ok(idx) = ntfs.find_file(machine_keys_dir) {
+                if let Ok(entries) = ntfs.list_directory(idx) {
+                    for (name, is_dir, _) in entries {
+                        if !is_dir && name != "." && name != ".." {
+                            let path = format!("{}/{}", machine_keys_dir, name);
+                            if let Ok(data) = ntfs.read_file(&path) {
+                                if data.len() <= MAX_FILE_READ_SIZE as usize {
+                                    log::info!(
+                                        "Found machine private key: {} ({} bytes)",
+                                        path,
+                                        data.len()
+                                    );
+                                    ctx.filesystem_files.entry(path).or_insert(data);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Scan SYSVOL for GPP XML files containing cpassword
             let sysvol_roots = [
                 "Windows/SYSVOL/domain/Policies",
@@ -1007,11 +1118,13 @@ impl Target {
             ("creds", Box::new(CachedCredsExtractor)),
             ("creds", Box::new(DpapiExtractor)),
             ("creds", Box::new(BrowserExtractor)),
+            ("creds", Box::new(CredMgrExtractor)),
             ("creds", Box::new(FirefoxExtractor)),
             ("creds", Box::new(LinuxCredsExtractor)),
             ("creds", Box::new(GppExtractor)),
             ("keys",  Box::new(SshExtractor)),
             ("keys",  Box::new(CloudExtractor)),
+            ("keys",  Box::new(CertExtractor)),
             ("persist", Box::new(PersistenceExtractor)),
         ];
 

@@ -20,6 +20,8 @@ pub enum Finding {
     CloudCredential(CloudCredentialFinding),
     MemoryCredential(MemoryCredentialFinding),
     GppPassword(GppPasswordFinding),
+    CredentialManager(CredentialManagerFinding),
+    Certificate(CertificateFinding),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -145,6 +147,29 @@ pub struct GppPasswordFinding {
     pub policy_type: String,      // "Groups", "Services", "Drives", "DataSources", "ScheduledTasks"
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct CredentialManagerFinding {
+    pub target: String,
+    pub username: String,
+    pub password: Option<String>,
+    pub credential_type: String,
+    pub user: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CertificateFinding {
+    pub subject: String,
+    pub issuer: String,
+    pub thumbprint: String,
+    pub not_before: Option<String>,
+    pub not_after: Option<String>,
+    pub key_usage: Option<String>,
+    pub has_private_key: bool,
+    pub private_key_exportable: bool,
+    pub source_path: String,
+    pub user: Option<String>,
+}
+
 /// Encode a byte slice as a lowercase hex string.
 pub fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
@@ -196,6 +221,8 @@ impl Finding {
             Finding::CloudCredential(_) => "cloud_credential",
             Finding::MemoryCredential(_) => "memory_credential",
             Finding::GppPassword(_) => "gpp_password",
+            Finding::CredentialManager(_) => "credential_manager",
+            Finding::Certificate(_) => "certificate",
         }
     }
 }
