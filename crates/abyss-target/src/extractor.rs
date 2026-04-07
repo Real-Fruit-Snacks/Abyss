@@ -16,6 +16,14 @@ pub struct ExtractionContext {
     pub syskey: Option<[u8; 16]>,
     pub lsa_key: Option<Vec<u8>>,
     pub nlkm: Option<Vec<u8>>,
+    /// DPAPI_SYSTEM raw bytes (from LSA secrets).
+    pub dpapi_system_raw: Option<Vec<u8>>,
+    /// Decrypted DPAPI keyring.
+    pub dpapi_keyring: Option<abyss_crypto::dpapi::DpapiKeyring>,
+    /// Raw DPAPI master key files: (SID, GUID, file_data).
+    pub dpapi_master_key_files: Vec<(String, String, Vec<u8>)>,
+    /// Browser data: (browser_name, local_state_bytes, login_data_bytes).
+    pub browser_data: Vec<(String, Vec<u8>, Vec<u8>)>,
 }
 
 impl ExtractionContext {
@@ -27,6 +35,10 @@ impl ExtractionContext {
             syskey: None,
             lsa_key: None,
             nlkm: None,
+            dpapi_system_raw: None,
+            dpapi_keyring: None,
+            dpapi_master_key_files: Vec::new(),
+            browser_data: Vec::new(),
         }
     }
 }

@@ -81,6 +81,33 @@ pub fn emit_text(findings: &[Finding], writer: &mut dyn Write) -> Result<(), Out
                     c.hash
                 )?;
             }
+            Finding::DpapiMasterKey(d) => {
+                let decrypted_label = if d.decrypted {
+                    "decrypted".green().to_string()
+                } else {
+                    "not decrypted".red().to_string()
+                };
+                writeln!(
+                    writer,
+                    "{} sid={} guid={} status={} source={}",
+                    "[DPAPI]".bold().blue(),
+                    d.user_sid,
+                    d.guid,
+                    decrypted_label,
+                    d.key_source
+                )?;
+            }
+            Finding::BrowserCredential(b) => {
+                writeln!(
+                    writer,
+                    "{} [{}] {} {} {}",
+                    "[BROWSER]".bold().green(),
+                    b.browser,
+                    b.url,
+                    b.username,
+                    b.password
+                )?;
+            }
         }
     }
     Ok(())

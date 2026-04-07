@@ -9,6 +9,8 @@ pub enum Finding {
     SamHash(SamHashFinding),
     LsaSecret(LsaSecretFinding),
     CachedCredential(CachedCredentialFinding),
+    DpapiMasterKey(DpapiMasterKeyFinding),
+    BrowserCredential(BrowserCredentialFinding),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,6 +35,22 @@ pub struct CachedCredentialFinding {
     pub domain: String,
     pub hash: String,
     pub iteration_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DpapiMasterKeyFinding {
+    pub user_sid: String,
+    pub guid: String,
+    pub decrypted: bool,
+    pub key_source: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BrowserCredentialFinding {
+    pub browser: String,
+    pub url: String,
+    pub username: String,
+    pub password: String,
 }
 
 /// Encode a byte slice as a lowercase hex string.
@@ -75,6 +93,8 @@ impl Finding {
             Finding::SamHash(_) => "sam_hash",
             Finding::LsaSecret(_) => "lsa_secret",
             Finding::CachedCredential(_) => "cached_credential",
+            Finding::DpapiMasterKey(_) => "dpapi_master_key",
+            Finding::BrowserCredential(_) => "browser_credential",
         }
     }
 }

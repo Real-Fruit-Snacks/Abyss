@@ -55,10 +55,13 @@ impl Extractor for LsaExtractor {
             detail: format!("LSA extraction: {e}"),
         })?;
 
-        // Capture NL$KM for cached creds before putting hive back.
+        // Capture NL$KM and DPAPI_SYSTEM before putting hive back.
         for secret in &secrets {
             if secret.name == "NL$KM" {
                 ctx.nlkm = Some(secret.current_value.clone());
+            }
+            if secret.name == "DPAPI_SYSTEM" {
+                ctx.dpapi_system_raw = Some(secret.current_value.clone());
             }
         }
 
