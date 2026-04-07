@@ -183,15 +183,55 @@ impl Target {
         self.ntfs.is_some()
     }
 
-    /// Build the extraction context. For now, hives are not opened from disk
-    /// (full NTFS file reading is a future phase); the context starts empty.
-    fn build_extraction_context(&mut self) -> ExtractionContext {
-        ExtractionContext::new()
+    /// Build the extraction context by loading registry hives from the NTFS filesystem.
+    fn build_extraction_context(&mut self) -> Result<ExtractionContext, TargetError> {
+        let mut ctx = ExtractionContext::new();
+
+        if self.os != OsType::Windows {
+            return Ok(ctx);
+        }
+
+        let hive_paths = [
+            ("SYSTEM", "Windows/System32/config/SYSTEM"),
+            ("SAM", "Windows/System32/config/SAM"),
+            ("SECURITY", "Windows/System32/config/SECURITY"),
+        ];
+
+        if let Some(ref mut ntfs) = self.ntfs {
+            for (name, path) in &hive_paths {
+                match ntfs.read_file(path) {
+                    Ok(data) => {
+                        let cursor = std::io::Cursor::new(data);
+                        match abyss_registry::RegistryHive::open(Box::new(cursor)) {
+                            Ok(hive) => {
+                                log::info!("Opened {} hive from {}", name, path);
+                                match *name {
+                                    "SYSTEM" => ctx.system_hive = Some(hive),
+                                    "SAM" => ctx.sam_hive = Some(hive),
+                                    "SECURITY" => ctx.security_hive = Some(hive),
+                                    _ => {}
+                                }
+                            }
+                            Err(e) => log::warn!("Failed to parse {} hive: {}", name, e),
+                        }
+                    }
+                    Err(e) => log::debug!("Could not read {}: {}", path, e),
+                }
+            }
+        }
+
+        Ok(ctx)
     }
 
     /// Run all compatible credential extractors and emit findings into `collector`.
     pub fn extract(&mut self, collector: &mut Collector) {
-        let mut ctx = self.build_extraction_context();
+        let mut ctx = match self.build_extraction_context() {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                log::warn!("Failed to build extraction context: {}", e);
+                return;
+            }
+        };
 
         let extractors: Vec<Box<dyn Extractor>> = vec![
             Box::new(SamExtractor),
