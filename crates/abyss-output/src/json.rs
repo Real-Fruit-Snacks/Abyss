@@ -2,26 +2,10 @@ use crate::finding::Finding;
 use crate::OutputError;
 use std::io::Write;
 
-/// Formats findings as JSONL (one JSON object per line).
-pub struct JsonFormatter;
-
-impl JsonFormatter {
-    pub fn new() -> Self {
-        JsonFormatter
+pub fn emit_json(findings: &[Finding], writer: &mut dyn Write) -> Result<(), OutputError> {
+    for finding in findings {
+        let json = serde_json::to_string(finding)?;
+        writeln!(writer, "{}", json)?;
     }
-
-    /// Write all findings to the given writer, one JSON object per line.
-    pub fn write_all<W: Write>(&self, writer: &mut W, findings: &[Finding]) -> Result<(), OutputError> {
-        for finding in findings {
-            let line = serde_json::to_string(finding)?;
-            writeln!(writer, "{}", line)?;
-        }
-        Ok(())
-    }
-}
-
-impl Default for JsonFormatter {
-    fn default() -> Self {
-        JsonFormatter::new()
-    }
+    Ok(())
 }

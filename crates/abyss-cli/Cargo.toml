@@ -1,16 +1,25 @@
 [package]
 name = "abyss-cli"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Abyss CLI - offensive disk/memory/AD analysis"
 
 [[bin]]
 name = "abyss"
 path = "src/main.rs"
 
 [dependencies]
-thiserror = { workspace = true }
-anyhow = { workspace = true }
+abyss-cstruct = { workspace = true }
+abyss-container = { workspace = true }
+abyss-volume = { workspace = true }
+abyss-ntfs = { workspace = true }
+abyss-extfs = { workspace = true }
+abyss-registry = { workspace = true }
+abyss-target = { workspace = true }
+abyss-output = { workspace = true }
 clap = { workspace = true }
 colored = { workspace = true }
+rustyline = { workspace = true }
+log = { workspace = true }
 env_logger = { workspace = true }
-abyss-output = { path = "../abyss-output" }

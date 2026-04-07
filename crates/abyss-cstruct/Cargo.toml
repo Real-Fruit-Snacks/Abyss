@@ -1,8 +1,9 @@
 [package]
 name = "abyss-cstruct"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Binary struct parsing utilities for Abyss"
 
 [dependencies]
 thiserror = { workspace = true }
-byteorder = { workspace = true }

@@ -1,38 +1,45 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
-/// A single forensic finding produced by any analysis module.
-/// Phase 1 only has TargetInfo; more variants are added in later phases.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+/// All extraction results flow through this enum.
+/// Phase 1 starts with TargetInfo only. Other variants added in later phases.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type")]
 pub enum Finding {
-    /// Basic information about the analysis target (image, dump, database).
-    TargetInfo {
-        /// Human-readable label for this target
-        label: String,
-        /// Type of target (e.g. "raw disk image", "memory dump", "NTDS database")
-        target_type: String,
-        /// File path or source description
-        source: String,
-        /// Size in bytes, if known
-        size_bytes: Option<u64>,
-        /// Additional key-value metadata
-        #[serde(default)]
-        metadata: std::collections::HashMap<String, String>,
-    },
+    TargetInfo(TargetInfoFinding),
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TargetInfoFinding {
+    pub os: String,
+    pub hostname: Option<String>,
+    pub version: Option<String>,
+    pub architecture: Option<String>,
+    pub domain: Option<String>,
+    pub volumes: Vec<VolumeInfo>,
+    pub filesystems: Vec<FilesystemInfo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VolumeInfo {
+    pub index: usize,
+    pub partition_type: String,
+    pub offset: u64,
+    pub size: u64,
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FilesystemInfo {
+    pub fs_type: String,
+    pub label: Option<String>,
+    pub total_size: u64,
+    pub mount_point: Option<String>,
 }
 
 impl Finding {
-    /// Short human-readable title for this finding.
-    pub fn title(&self) -> &str {
+    pub fn type_name(&self) -> &'static str {
         match self {
-            Finding::TargetInfo { .. } => "Target Information",
-        }
-    }
-
-    /// Category tag for grouping findings.
-    pub fn category(&self) -> &str {
-        match self {
-            Finding::TargetInfo { .. } => "info",
+            Finding::TargetInfo(_) => "target_info",
         }
     }
 }

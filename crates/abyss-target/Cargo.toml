@@ -1,0 +1,17 @@
+[package]
+name = "abyss-target"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Target abstraction layer for Abyss"
+
+[dependencies]
+abyss-cstruct = { workspace = true }
+abyss-container = { workspace = true }
+abyss-volume = { workspace = true }
+abyss-ntfs = { workspace = true }
+abyss-extfs = { workspace = true }
+abyss-registry = { workspace = true }
+abyss-output = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

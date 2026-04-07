@@ -1,9 +1,0 @@
-[package]
-name = "abyss-evtx"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-thiserror = { workspace = true }
-abyss-output = { path = "../abyss-output" }
-abyss-cstruct = { path = "../abyss-cstruct" }

@@ -1,11 +1,7 @@
-use thiserror::Error;
+//! abyss-ntfs: NTFS filesystem parser.
+//!
+//! Parses NTFS volumes: boot sector, MFT, attributes, directory indexes.
 
-#[derive(Debug, Error)]
-pub enum NtfsError {
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("invalid NTFS signature")]
-    InvalidSignature,
-    #[error("parse error: {0}")]
-    Parse(String),
-}
+pub mod error;
+
+pub use error::NtfsError;

@@ -1,9 +1,12 @@
 [package]
 name = "abyss-ntfs"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NTFS filesystem parser for Abyss"
 
 [dependencies]
+abyss-cstruct = { workspace = true }
+abyss-container = { workspace = true }
 thiserror = { workspace = true }
-abyss-output = { path = "../abyss-output" }
-abyss-cstruct = { path = "../abyss-cstruct" }
+log = { workspace = true }

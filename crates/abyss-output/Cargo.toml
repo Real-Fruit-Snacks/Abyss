@@ -1,10 +1,12 @@
 [package]
 name = "abyss-output"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Output formatting and finding types for Abyss"
 
 [dependencies]
-thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 colored = { workspace = true }
+thiserror = { workspace = true }

@@ -1,19 +1,11 @@
-pub mod finding;
+//! abyss-output: Output formatting and finding types.
+
 pub mod collector;
-pub mod text;
+pub mod error;
+pub mod finding;
 pub mod json;
+pub mod text;
 
-pub use finding::Finding;
 pub use collector::Collector;
-pub use text::TextFormatter;
-pub use json::JsonFormatter;
-
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum OutputError {
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("serialization error: {0}")]
-    Serialize(#[from] serde_json::Error),
-}
+pub use error::OutputError;
+pub use finding::Finding;

@@ -1,11 +1,5 @@
-use thiserror::Error;
+//! abyss-registry: Windows registry hive (REGF) parser.
 
-#[derive(Debug, Error)]
-pub enum RegistryError {
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("invalid registry hive signature")]
-    InvalidSignature,
-    #[error("parse error: {0}")]
-    Parse(String),
-}
+pub mod error;
+
+pub use error::RegistryError;

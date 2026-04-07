@@ -1,57 +1,123 @@
-mod banner;
-mod commands;
-
-use anyhow::Result;
+use abyss_output::collector::OutputFormat;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
     name = "abyss",
-    version = env!("CARGO_PKG_VERSION"),
-    about = "Offline offensive analysis of disk images, memory dumps, and AD databases",
-    long_about = None,
-    after_help = "Use 'abyss <COMMAND> --help' for more information on a specific command.",
+    about = "Offensive disk/memory/AD analysis framework",
+    version,
+    arg_required_else_help = true
 )]
 struct Cli {
-    /// Output findings as JSONL instead of human-readable text
-    #[arg(long, global = true)]
-    json: bool,
-
-    /// Increase verbosity (can be repeated)
-    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
-    verbose: u8,
-
     #[command(subcommand)]
     command: Commands,
+
+    /// Output format: text, json
+    #[arg(short, long, default_value = "text", global = true)]
+    output: String,
+
+    /// Suppress banner and progress output
+    #[arg(short, long, global = true)]
+    quiet: bool,
+
+    /// Verbose logging
+    #[arg(short, long, global = true)]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Analyse a raw disk image or forensic image format
-    Image(commands::image::ImageArgs),
-    /// Display quick info about a target without full analysis
-    Info(commands::info::InfoArgs),
-    /// Open an interactive shell for manual exploration
-    Shell(commands::shell::ShellArgs),
+    /// Analyze a disk image and extract findings
+    Image {
+        /// Path to disk image
+        path: String,
+
+        /// Extract credentials only
+        #[arg(long)]
+        creds: bool,
+
+        /// Extract SSH/WireGuard/VPN keys only
+        #[arg(long)]
+        keys: bool,
+
+        /// Extract persistence mechanisms only
+        #[arg(long)]
+        persist: bool,
+
+        /// Extract everything (default)
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Display target metadata
+    Info {
+        /// Path to disk image
+        path: String,
+    },
+
+    /// Interactive filesystem shell
+    Shell {
+        /// Path to disk image
+        path: String,
+    },
 }
 
-fn main() -> Result<()> {
-    banner::print_banner();
-
+fn main() {
     let cli = Cli::parse();
 
-    // Initialise logging based on verbosity
-    let log_level = match cli.verbose {
-        0 => "warn",
-        1 => "info",
-        2 => "debug",
-        _ => "trace",
-    };
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level)).init();
-
-    match cli.command {
-        Commands::Image(args) => commands::image::run(args, cli.json),
-        Commands::Info(args) => commands::info::run(args, cli.json),
-        Commands::Shell(args) => commands::shell::run(args, cli.json),
+    if !cli.quiet {
+        print_banner();
     }
+
+    if cli.verbose {
+        env_logger::Builder::from_env(
+            env_logger::Env::default().default_filter_or("debug"),
+        )
+        .init();
+    } else {
+        env_logger::Builder::from_env(
+            env_logger::Env::default().default_filter_or("warn"),
+        )
+        .init();
+    }
+
+    let output_format = match cli.output.as_str() {
+        "json" => OutputFormat::Json,
+        _ => OutputFormat::Text,
+    };
+
+    let exit_code = match cli.command {
+        Commands::Image { ref path, .. } => {
+            eprintln!("abyss image: not yet implemented (target: {})", path);
+            let _ = output_format;
+            2
+        }
+        Commands::Info { ref path } => {
+            eprintln!("abyss info: not yet implemented (target: {})", path);
+            let _ = output_format;
+            2
+        }
+        Commands::Shell { ref path } => {
+            eprintln!("abyss shell: not yet implemented (target: {})", path);
+            2
+        }
+    };
+
+    std::process::exit(exit_code);
+}
+
+fn print_banner() {
+    use colored::Colorize;
+    eprintln!(
+        "{}",
+        r#"
+    ___    __
+   /   |  / /_  __  __________
+  / /| | / __ \/ / / / ___/ ___/
+ / ___ |/ /_/ / /_/ (__  |__  )
+/_/  |_/_.___/\__, /____/____/
+             /____/
+"#
+        .bright_blue()
+    );
 }
