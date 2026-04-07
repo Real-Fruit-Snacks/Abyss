@@ -91,8 +91,8 @@ pub struct Target {
     pub version: Option<String>,
     pub domain: Option<String>,
     pub partitions: Vec<Partition>,
-    pub ntfs: Option<NtfsFilesystem>,
-    pub extfs: Option<ExtFilesystem>,
+    pub ntfs_filesystems: Vec<NtfsFilesystem>,
+    pub extfs_filesystems: Vec<ExtFilesystem>,
 }
 
 impl Target {
@@ -113,8 +113,8 @@ impl Target {
         };
 
         let mut os = OsType::Unknown;
-        let mut ntfs: Option<NtfsFilesystem> = None;
-        let mut extfs: Option<ExtFilesystem> = None;
+        let mut ntfs_filesystems: Vec<NtfsFilesystem> = Vec::new();
+        let mut extfs_filesystems: Vec<ExtFilesystem> = Vec::new();
 
         if partitions.is_empty() {
             let size = shared.size();
@@ -125,25 +125,29 @@ impl Target {
                 let open_reader: Box<dyn ReadSeek> =
                     Box::new(SliceReader::new(shared.clone_reader(), 0, size));
                 match NtfsFilesystem::open(open_reader) {
-                    Ok(fs) => { os = OsType::Windows; ntfs = Some(fs); }
+                    Ok(fs) => {
+                        if os == OsType::Unknown { os = OsType::Windows; }
+                        ntfs_filesystems.push(fs);
+                    }
                     Err(e) => log::debug!("NTFS open failed on whole image: {}", e),
                 }
             }
-            // Try ext if NTFS didn't match
-            if ntfs.is_none() {
-                let mut probe_reader: Box<dyn ReadSeek> =
+            // Try ext on whole image (independent of NTFS result)
+            let mut probe_reader: Box<dyn ReadSeek> =
+                Box::new(SliceReader::new(shared.clone_reader(), 0, size));
+            if ExtFilesystem::probe(&mut probe_reader) {
+                let open_reader: Box<dyn ReadSeek> =
                     Box::new(SliceReader::new(shared.clone_reader(), 0, size));
-                if ExtFilesystem::probe(&mut probe_reader) {
-                    let open_reader: Box<dyn ReadSeek> =
-                        Box::new(SliceReader::new(shared.clone_reader(), 0, size));
-                    match ExtFilesystem::open(open_reader) {
-                        Ok(fs) => { os = OsType::Linux; extfs = Some(fs); }
-                        Err(e) => log::debug!("ext open failed on whole image: {}", e),
+                match ExtFilesystem::open(open_reader) {
+                    Ok(fs) => {
+                        if os == OsType::Unknown { os = OsType::Linux; }
+                        extfs_filesystems.push(fs);
                     }
+                    Err(e) => log::debug!("ext open failed on whole image: {}", e),
                 }
             }
         } else {
-            // Probe partitions for NTFS
+            // Probe each partition for both NTFS and ext; collect all matches
             for partition in &partitions {
                 let mut probe_reader: Box<dyn ReadSeek> = Box::new(SliceReader::new(
                     shared.clone_reader(), partition.offset, partition.size,
@@ -153,14 +157,13 @@ impl Target {
                         shared.clone_reader(), partition.offset, partition.size,
                     ));
                     match NtfsFilesystem::open(open_reader) {
-                        Ok(fs) => { os = OsType::Windows; ntfs = Some(fs); break; }
+                        Ok(fs) => {
+                            if os == OsType::Unknown { os = OsType::Windows; }
+                            ntfs_filesystems.push(fs);
+                        }
                         Err(e) => log::debug!("NTFS open failed on partition {}: {}", partition.index, e),
                     }
-                }
-            }
-            // Probe partitions for ext if no NTFS found
-            if ntfs.is_none() {
-                for partition in &partitions {
+                } else {
                     let mut probe_reader: Box<dyn ReadSeek> = Box::new(SliceReader::new(
                         shared.clone_reader(), partition.offset, partition.size,
                     ));
@@ -169,7 +172,10 @@ impl Target {
                             shared.clone_reader(), partition.offset, partition.size,
                         ));
                         match ExtFilesystem::open(open_reader) {
-                            Ok(fs) => { os = OsType::Linux; extfs = Some(fs); break; }
+                            Ok(fs) => {
+                                if os == OsType::Unknown { os = OsType::Linux; }
+                                extfs_filesystems.push(fs);
+                            }
                             Err(e) => log::debug!("ext open failed on partition {}: {}", partition.index, e),
                         }
                     }
@@ -177,19 +183,30 @@ impl Target {
             }
         }
 
-        Ok(Target { os, hostname: None, version: None, domain: None, partitions, ntfs, extfs })
+        // If both NTFS and ext filesystems found (dual-boot), keep the OS that has more
+        if !ntfs_filesystems.is_empty() && !extfs_filesystems.is_empty() {
+            if extfs_filesystems.len() > ntfs_filesystems.len() {
+                os = OsType::Linux;
+            } else {
+                os = OsType::Windows;
+            }
+        }
+
+        Ok(Target { os, hostname: None, version: None, domain: None, partitions, ntfs_filesystems, extfs_filesystems })
     }
 
     /// Returns true if any filesystem was successfully opened.
     pub fn has_filesystem(&self) -> bool {
-        self.ntfs.is_some() || self.extfs.is_some()
+        !self.ntfs_filesystems.is_empty() || !self.extfs_filesystems.is_empty()
     }
 
     /// Returns the filesystem type name if one is open.
     pub fn filesystem_type(&self) -> Option<&'static str> {
-        if self.ntfs.is_some() {
+        if !self.ntfs_filesystems.is_empty() && !self.extfs_filesystems.is_empty() {
+            Some("NTFS+ext")
+        } else if !self.ntfs_filesystems.is_empty() {
             Some("NTFS")
-        } else if self.extfs.is_some() {
+        } else if !self.extfs_filesystems.is_empty() {
             Some("ext")
         } else {
             None
@@ -198,41 +215,55 @@ impl Target {
 
     /// Read a file by path from whichever filesystem is available.
     pub fn read_file(&mut self, path: &str) -> Result<Vec<u8>, TargetError> {
-        if let Some(ref mut ntfs) = self.ntfs {
-            Ok(ntfs.read_file(path)?)
-        } else if let Some(ref mut extfs) = self.extfs {
-            Ok(extfs.read_file(path)?)
-        } else {
-            Err(TargetError::NoFilesystem)
+        for ntfs in &mut self.ntfs_filesystems {
+            if let Ok(data) = ntfs.read_file(path) {
+                return Ok(data);
+            }
         }
+        for extfs in &mut self.extfs_filesystems {
+            if let Ok(data) = extfs.read_file(path) {
+                return Ok(data);
+            }
+        }
+        Err(TargetError::NoFilesystem)
     }
 
     /// List directory contents from whichever filesystem is available.
     /// Returns Vec of (name, is_directory, id).
     pub fn list_directory_by_path(&mut self, path: &str) -> Result<Vec<(String, bool, u64)>, TargetError> {
-        if let Some(ref mut ntfs) = self.ntfs {
+        // Try each NTFS filesystem first
+        for ntfs in &mut self.ntfs_filesystems {
             let dir_index = if path == "/" || path.is_empty() {
                 5u64 // NTFS root
             } else {
-                ntfs.find_file(path)?
+                match ntfs.find_file(path) {
+                    Ok(idx) => idx,
+                    Err(_) => continue,
+                }
             };
-            Ok(ntfs.list_directory(dir_index)?)
-        } else if let Some(ref mut extfs) = self.extfs {
-            let (ino, _inode) = if path == "/" || path.is_empty() {
-                let inode = extfs.read_inode(2)?;
-                (2u64, inode)
-            } else {
-                extfs.find_file(path)?
-            };
-            let entries = extfs.list_directory(ino)?;
-            Ok(entries
-                .into_iter()
-                .filter(|e| e.name != "." && e.name != "..")
-                .map(|e| (e.name, e.file_type == abyss_extfs::dir::ExtFileType::Directory, e.inode as u64))
-                .collect())
-        } else {
-            Err(TargetError::NoFilesystem)
+            if let Ok(entries) = ntfs.list_directory(dir_index) {
+                return Ok(entries);
+            }
         }
+        // Try each ext filesystem
+        for extfs in &mut self.extfs_filesystems {
+            let ino = if path == "/" || path.is_empty() {
+                2u64
+            } else {
+                match extfs.find_file(path) {
+                    Ok((ino, _)) => ino,
+                    Err(_) => continue,
+                }
+            };
+            if let Ok(entries) = extfs.list_directory(ino) {
+                return Ok(entries
+                    .into_iter()
+                    .filter(|e| e.name != "." && e.name != "..")
+                    .map(|e| (e.name, e.file_type == abyss_extfs::dir::ExtFileType::Directory, e.inode as u64))
+                    .collect());
+            }
+        }
+        Err(TargetError::NoFilesystem)
     }
 
     /// Build the extraction context by loading registry hives and credential files.
@@ -254,7 +285,7 @@ impl Target {
             ("SECURITY", "Windows/System32/config/SECURITY"),
         ];
 
-        if let Some(ref mut ntfs) = self.ntfs {
+        for ntfs in &mut self.ntfs_filesystems {
             for (name, path) in &hive_paths {
                 match ntfs.read_file(path) {
                     Ok(data) => {
@@ -263,9 +294,9 @@ impl Target {
                             Ok(hive) => {
                                 log::info!("Opened {} hive from {}", name, path);
                                 match *name {
-                                    "SYSTEM" => ctx.system_hive = Some(hive),
-                                    "SAM" => ctx.sam_hive = Some(hive),
-                                    "SECURITY" => ctx.security_hive = Some(hive),
+                                    "SYSTEM" => { if ctx.system_hive.is_none() { ctx.system_hive = Some(hive); } }
+                                    "SAM" => { if ctx.sam_hive.is_none() { ctx.sam_hive = Some(hive); } }
+                                    "SECURITY" => { if ctx.security_hive.is_none() { ctx.security_hive = Some(hive); } }
                                     _ => {}
                                 }
                             }
@@ -277,12 +308,14 @@ impl Target {
             }
 
             // Try to read NTDS.dit (Domain Controller)
-            match ntfs.read_file("Windows/NTDS/ntds.dit") {
-                Ok(data) => {
-                    log::info!("Found NTDS.dit ({} bytes)", data.len());
-                    ctx.ntds_dit = Some(data);
+            if ctx.ntds_dit.is_none() {
+                match ntfs.read_file("Windows/NTDS/ntds.dit") {
+                    Ok(data) => {
+                        log::info!("Found NTDS.dit ({} bytes)", data.len());
+                        ctx.ntds_dit = Some(data);
+                    }
+                    Err(e) => log::debug!("Could not read NTDS.dit: {}", e),
                 }
-                Err(e) => log::debug!("Could not read NTDS.dit: {}", e),
             }
 
             // Discover users from Windows Users/ directory
@@ -296,6 +329,7 @@ impl Target {
                             && name != "Default"
                             && name != "Default User"
                             && name != "All Users"
+                            && !ctx.discovered_users.contains(&name)
                         {
                             ctx.discovered_users.push(name);
                         }
@@ -350,7 +384,7 @@ impl Target {
 
             for path in &ssh_paths {
                 if let Ok(data) = ntfs.read_file(path) {
-                    ctx.filesystem_files.insert(path.clone(), data);
+                    ctx.filesystem_files.entry(path.clone()).or_insert(data);
                 }
             }
 
@@ -381,7 +415,7 @@ impl Target {
             ];
             for path in &linux_paths {
                 if let Ok(data) = ntfs.read_file(path) {
-                    ctx.filesystem_files.insert(path.to_string(), data);
+                    ctx.filesystem_files.entry(path.to_string()).or_insert(data);
                 }
             }
 
@@ -416,7 +450,7 @@ impl Target {
                 for rel in &user_rel_paths {
                     let full = format!("{}/{}", home, rel);
                     if let Ok(data) = ntfs.read_file(&full) {
-                        ctx.filesystem_files.insert(full, data);
+                        ctx.filesystem_files.entry(full).or_insert(data);
                     }
                 }
             }
@@ -439,7 +473,7 @@ impl Target {
                 for rel in &win_cloud_rel_paths {
                     let full = format!("Users/{}/{}", user, rel);
                     if let Ok(data) = ntfs.read_file(&full) {
-                        ctx.filesystem_files.insert(full, data);
+                        ctx.filesystem_files.entry(full).or_insert(data);
                     }
                 }
             }
@@ -451,7 +485,7 @@ impl Target {
                         if name.ends_with(".conf") {
                             let path = format!("etc/wireguard/{}", name);
                             if let Ok(data) = ntfs.read_file(&path) {
-                                ctx.filesystem_files.insert(path, data);
+                                ctx.filesystem_files.entry(path).or_insert(data);
                             }
                         }
                     }
@@ -555,173 +589,170 @@ impl Target {
 
     /// Build extraction context for Linux targets using extfs.
     fn build_linux_extraction_context(&mut self, mut ctx: ExtractionContext) -> Result<ExtractionContext, TargetError> {
-        let extfs = match self.extfs.as_mut() {
-            Some(fs) => fs,
-            None => return Ok(ctx),
-        };
-
-        // Discover users from home/ directory
-        if let Ok(entries) = extfs.list_directory(2) {
-            // Look for "home" in root
-            for entry in &entries {
-                if entry.name == "home" && entry.file_type == abyss_extfs::dir::ExtFileType::Directory {
-                    if let Ok(home_entries) = extfs.list_directory(entry.inode as u64) {
-                        for he in home_entries {
-                            if !he.name.is_empty() && he.name != "." && he.name != ".." && he.file_type == abyss_extfs::dir::ExtFileType::Directory {
-                                if !ctx.discovered_users.contains(&he.name) {
-                                    ctx.discovered_users.push(he.name);
+        for extfs in &mut self.extfs_filesystems {
+            // Discover users from home/ directory
+            if let Ok(entries) = extfs.list_directory(2) {
+                // Look for "home" in root
+                for entry in &entries {
+                    if entry.name == "home" && entry.file_type == abyss_extfs::dir::ExtFileType::Directory {
+                        if let Ok(home_entries) = extfs.list_directory(entry.inode as u64) {
+                            for he in home_entries {
+                                if !he.name.is_empty() && he.name != "." && he.name != ".." && he.file_type == abyss_extfs::dir::ExtFileType::Directory {
+                                    if !ctx.discovered_users.contains(&he.name) {
+                                        ctx.discovered_users.push(he.name);
+                                    }
                                 }
                             }
                         }
+                        break;
                     }
-                    break;
                 }
             }
-        }
 
-        let candidate_users: Vec<String> = {
-            let mut v = ctx.discovered_users.clone();
-            for common in &["root", "ubuntu", "ec2-user", "admin", "user"] {
-                let s = common.to_string();
-                if !v.contains(&s) {
-                    v.push(s);
+            let candidate_users: Vec<String> = {
+                let mut v = ctx.discovered_users.clone();
+                for common in &["root", "ubuntu", "ec2-user", "admin", "user"] {
+                    let s = common.to_string();
+                    if !v.contains(&s) {
+                        v.push(s);
+                    }
                 }
-            }
-            v
-        };
-
-        // SSH keys
-        for user in &candidate_users {
-            let prefixes: Vec<String> = if user == "root" {
-                vec!["root/.ssh".to_string(), "home/root/.ssh".to_string()]
-            } else {
-                vec![format!("home/{}/.ssh", user)]
+                v
             };
-            for prefix in &prefixes {
-                for key_name in &["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", "authorized_keys"] {
-                    let path = format!("{}/{}", prefix, key_name);
-                    if let Ok(data) = extfs.read_file(&path) {
-                        ctx.filesystem_files.insert(path, data);
-                    }
-                }
-            }
-        }
 
-        // SSH host keys
-        for host_key in &["ssh_host_rsa_key", "ssh_host_ed25519_key", "ssh_host_ecdsa_key"] {
-            let path = format!("etc/ssh/{}", host_key);
-            if let Ok(data) = extfs.read_file(&path) {
-                ctx.filesystem_files.insert(path, data);
-            }
-        }
-
-        // Linux credential files
-        let linux_paths = [
-            "etc/shadow", "etc/passwd",
-            "root/.aws/credentials", "root/.aws/config",
-            "root/.git-credentials",
-            "root/.netrc", "root/.docker/config.json", "root/.vnc/passwd",
-            "root/.azure/accessTokens.json",
-            "root/.azure/azureProfile.json",
-            "root/.azure/msal_token_cache.json",
-            "root/.config/gcloud/application_default_credentials.json",
-            "root/.config/gcloud/properties",
-            "root/.config/gh/hosts.yml",
-            "root/.config/hub",
-            "root/.kube/config",
-            "root/.terraform.d/credentials.tfrc.json",
-            "root/.env",
-            "root/.bashrc",
-            "root/.bash_profile",
-            "root/.profile",
-            "root/.zshrc",
-        ];
-        for path in &linux_paths {
-            if let Ok(data) = extfs.read_file(path) {
-                ctx.filesystem_files.insert(path.to_string(), data);
-            }
-        }
-
-        // Per-user service files
-        let user_rel_paths = [
-            ".aws/credentials",
-            ".aws/config",
-            ".git-credentials",
-            ".netrc",
-            ".docker/config.json",
-            ".azure/accessTokens.json",
-            ".azure/azureProfile.json",
-            ".azure/msal_token_cache.json",
-            ".config/gcloud/application_default_credentials.json",
-            ".config/gcloud/properties",
-            ".config/gh/hosts.yml",
-            ".config/hub",
-            ".kube/config",
-            ".terraform.d/credentials.tfrc.json",
-            ".env",
-            ".bashrc",
-            ".bash_profile",
-            ".profile",
-            ".zshrc",
-        ];
-        for user in &candidate_users {
-            let home = if user == "root" { "root".to_string() } else { format!("home/{}", user) };
-            for rel in &user_rel_paths {
-                let full = format!("{}/{}", home, rel);
-                if let Ok(data) = extfs.read_file(&full) {
-                    ctx.filesystem_files.insert(full, data);
-                }
-            }
-        }
-
-        // WireGuard configs
-        if let Ok((_ino, _inode)) = extfs.find_file("etc/wireguard") {
-            if let Ok(entries) = extfs.list_directory(_ino) {
-                for entry in entries {
-                    if entry.name.ends_with(".conf") {
-                        let path = format!("etc/wireguard/{}", entry.name);
+            // SSH keys
+            for user in &candidate_users {
+                let prefixes: Vec<String> = if user == "root" {
+                    vec!["root/.ssh".to_string(), "home/root/.ssh".to_string()]
+                } else {
+                    vec![format!("home/{}/.ssh", user)]
+                };
+                for prefix in &prefixes {
+                    for key_name in &["id_rsa", "id_ed25519", "id_ecdsa", "id_dsa", "authorized_keys"] {
+                        let path = format!("{}/{}", prefix, key_name);
                         if let Ok(data) = extfs.read_file(&path) {
-                            ctx.filesystem_files.insert(path, data);
+                            ctx.filesystem_files.entry(path).or_insert(data);
                         }
                     }
                 }
             }
-        }
 
-        // Firefox profile discovery (Linux)
-        for user in &candidate_users {
-            let home = if user == "root" {
-                "root".to_string()
-            } else {
-                format!("home/{}", user)
-            };
-            let profiles_dir = format!("{}/.mozilla/firefox", home);
-            if let Ok((profiles_ino, _)) = extfs.find_file(&profiles_dir) {
-                if let Ok(entries) = extfs.list_directory(profiles_ino) {
+            // SSH host keys
+            for host_key in &["ssh_host_rsa_key", "ssh_host_ed25519_key", "ssh_host_ecdsa_key"] {
+                let path = format!("etc/ssh/{}", host_key);
+                if let Ok(data) = extfs.read_file(&path) {
+                    ctx.filesystem_files.entry(path).or_insert(data);
+                }
+            }
+
+            // Linux credential files
+            let linux_paths = [
+                "etc/shadow", "etc/passwd",
+                "root/.aws/credentials", "root/.aws/config",
+                "root/.git-credentials",
+                "root/.netrc", "root/.docker/config.json", "root/.vnc/passwd",
+                "root/.azure/accessTokens.json",
+                "root/.azure/azureProfile.json",
+                "root/.azure/msal_token_cache.json",
+                "root/.config/gcloud/application_default_credentials.json",
+                "root/.config/gcloud/properties",
+                "root/.config/gh/hosts.yml",
+                "root/.config/hub",
+                "root/.kube/config",
+                "root/.terraform.d/credentials.tfrc.json",
+                "root/.env",
+                "root/.bashrc",
+                "root/.bash_profile",
+                "root/.profile",
+                "root/.zshrc",
+            ];
+            for path in &linux_paths {
+                if let Ok(data) = extfs.read_file(path) {
+                    ctx.filesystem_files.entry(path.to_string()).or_insert(data);
+                }
+            }
+
+            // Per-user service files
+            let user_rel_paths = [
+                ".aws/credentials",
+                ".aws/config",
+                ".git-credentials",
+                ".netrc",
+                ".docker/config.json",
+                ".azure/accessTokens.json",
+                ".azure/azureProfile.json",
+                ".azure/msal_token_cache.json",
+                ".config/gcloud/application_default_credentials.json",
+                ".config/gcloud/properties",
+                ".config/gh/hosts.yml",
+                ".config/hub",
+                ".kube/config",
+                ".terraform.d/credentials.tfrc.json",
+                ".env",
+                ".bashrc",
+                ".bash_profile",
+                ".profile",
+                ".zshrc",
+            ];
+            for user in &candidate_users {
+                let home = if user == "root" { "root".to_string() } else { format!("home/{}", user) };
+                for rel in &user_rel_paths {
+                    let full = format!("{}/{}", home, rel);
+                    if let Ok(data) = extfs.read_file(&full) {
+                        ctx.filesystem_files.entry(full).or_insert(data);
+                    }
+                }
+            }
+
+            // WireGuard configs
+            if let Ok((_ino, _inode)) = extfs.find_file("etc/wireguard") {
+                if let Ok(entries) = extfs.list_directory(_ino) {
                     for entry in entries {
-                        if entry.file_type != abyss_extfs::dir::ExtFileType::Directory
-                            || entry.name == "."
-                            || entry.name == ".."
-                        {
-                            continue;
+                        if entry.name.ends_with(".conf") {
+                            let path = format!("etc/wireguard/{}", entry.name);
+                            if let Ok(data) = extfs.read_file(&path) {
+                                ctx.filesystem_files.entry(path).or_insert(data);
+                            }
                         }
-                        let key4_path =
-                            format!("{}/{}/key4.db", profiles_dir, entry.name);
-                        let logins_path =
-                            format!("{}/{}/logins.json", profiles_dir, entry.name);
-                        let key4 = extfs.read_file(&key4_path);
-                        let logins = extfs.read_file(&logins_path);
-                        if let (Ok(key4_data), Ok(logins_data)) = (key4, logins) {
-                            log::info!(
-                                "Found Firefox profile for {}: {}",
-                                user,
-                                entry.name
-                            );
-                            ctx.firefox_profiles.push((
-                                user.clone(),
-                                key4_data,
-                                logins_data,
-                            ));
+                    }
+                }
+            }
+
+            // Firefox profile discovery (Linux)
+            for user in &candidate_users {
+                let home = if user == "root" {
+                    "root".to_string()
+                } else {
+                    format!("home/{}", user)
+                };
+                let profiles_dir = format!("{}/.mozilla/firefox", home);
+                if let Ok((profiles_ino, _)) = extfs.find_file(&profiles_dir) {
+                    if let Ok(entries) = extfs.list_directory(profiles_ino) {
+                        for entry in entries {
+                            if entry.file_type != abyss_extfs::dir::ExtFileType::Directory
+                                || entry.name == "."
+                                || entry.name == ".."
+                            {
+                                continue;
+                            }
+                            let key4_path =
+                                format!("{}/{}/key4.db", profiles_dir, entry.name);
+                            let logins_path =
+                                format!("{}/{}/logins.json", profiles_dir, entry.name);
+                            let key4 = extfs.read_file(&key4_path);
+                            let logins = extfs.read_file(&logins_path);
+                            if let (Ok(key4_data), Ok(logins_data)) = (key4, logins) {
+                                log::info!(
+                                    "Found Firefox profile for {}: {}",
+                                    user,
+                                    entry.name
+                                );
+                                ctx.firefox_profiles.push((
+                                    user.clone(),
+                                    key4_data,
+                                    logins_data,
+                                ));
+                            }
                         }
                     }
                 }
@@ -790,7 +821,7 @@ impl Target {
             .collect();
 
         let mut filesystems: Vec<FilesystemInfo> = Vec::new();
-        if let Some(ntfs) = &self.ntfs {
+        for ntfs in &self.ntfs_filesystems {
             filesystems.push(FilesystemInfo {
                 fs_type: "NTFS".to_string(),
                 label: None,
@@ -798,7 +829,7 @@ impl Target {
                 mount_point: None,
             });
         }
-        if let Some(extfs) = &self.extfs {
+        for extfs in &self.extfs_filesystems {
             filesystems.push(FilesystemInfo {
                 fs_type: "ext".to_string(),
                 label: None,
