@@ -12,4 +12,4 @@ pub mod shell;
 pub mod target;
 
 pub use error::TargetError;
-pub use target::Target;
+pub use target::{ExtractFilter, Target};

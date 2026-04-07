@@ -53,6 +53,37 @@ impl Seek for SliceReader {
     }
 }
 
+/// Controls which categories of extractors to run.
+#[derive(Debug, Clone)]
+pub enum ExtractFilter {
+    /// Run all extractors.
+    All,
+    /// Run only the specified categories ("creds", "keys", "persist").
+    Categories(Vec<String>),
+}
+
+impl ExtractFilter {
+    /// Build a filter from CLI flags.
+    pub fn from_flags(creds: bool, keys: bool, persist: bool, all: bool) -> Self {
+        if all || (!creds && !keys && !persist) {
+            return ExtractFilter::All;
+        }
+        let mut cats = Vec::new();
+        if creds { cats.push("creds".to_string()); }
+        if keys { cats.push("keys".to_string()); }
+        if persist { cats.push("persist".to_string()); }
+        ExtractFilter::Categories(cats)
+    }
+
+    /// Returns true if the given category should run.
+    pub fn includes(&self, category: &str) -> bool {
+        match self {
+            ExtractFilter::All => true,
+            ExtractFilter::Categories(cats) => cats.iter().any(|c| c == category),
+        }
+    }
+}
+
 /// Opened target disk image with OS detection and filesystem discovery.
 pub struct Target {
     pub os: OsType,
@@ -702,6 +733,11 @@ impl Target {
 
     /// Run all compatible credential extractors and emit findings into `collector`.
     pub fn extract(&mut self, collector: &mut Collector) {
+        self.extract_filtered(collector, &ExtractFilter::All);
+    }
+
+    /// Run extractors filtered by category.
+    pub fn extract_filtered(&mut self, collector: &mut Collector, filter: &ExtractFilter) {
         let mut ctx = match self.build_extraction_context() {
             Ok(ctx) => ctx,
             Err(e) => {
@@ -710,21 +746,25 @@ impl Target {
             }
         };
 
-        let extractors: Vec<Box<dyn Extractor>> = vec![
-            Box::new(SamExtractor),
-            Box::new(NtdsExtractor),
-            Box::new(LsaExtractor),
-            Box::new(CachedCredsExtractor),
-            Box::new(DpapiExtractor),
-            Box::new(BrowserExtractor),
-            Box::new(FirefoxExtractor),
-            Box::new(SshExtractor),
-            Box::new(LinuxCredsExtractor),
-            Box::new(PersistenceExtractor),
-            Box::new(CloudExtractor),
+        let all_extractors: Vec<(&str, Box<dyn Extractor>)> = vec![
+            ("creds", Box::new(SamExtractor)),
+            ("creds", Box::new(NtdsExtractor)),
+            ("creds", Box::new(LsaExtractor)),
+            ("creds", Box::new(CachedCredsExtractor)),
+            ("creds", Box::new(DpapiExtractor)),
+            ("creds", Box::new(BrowserExtractor)),
+            ("creds", Box::new(FirefoxExtractor)),
+            ("creds", Box::new(LinuxCredsExtractor)),
+            ("keys",  Box::new(SshExtractor)),
+            ("keys",  Box::new(CloudExtractor)),
+            ("persist", Box::new(PersistenceExtractor)),
         ];
 
-        for extractor in &extractors {
+        for (category, extractor) in &all_extractors {
+            if !filter.includes(category) {
+                log::debug!("{} extractor: skipped by filter", extractor.name());
+                continue;
+            }
             if extractor.is_compatible(&ctx) {
                 if let Err(e) = extractor.extract(&mut ctx, collector) {
                     log::warn!("{} extractor failed: {}", extractor.name(), e);

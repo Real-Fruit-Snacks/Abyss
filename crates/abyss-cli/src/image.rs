@@ -1,13 +1,13 @@
 use abyss_output::collector::{Collector, OutputFormat};
-use abyss_target::Target;
+use abyss_target::{ExtractFilter, Target};
 use std::path::Path;
 
 pub fn run(
     path: &str,
-    _creds: bool,
-    _keys: bool,
-    _persist: bool,
-    _all: bool,
+    creds: bool,
+    keys: bool,
+    persist: bool,
+    all: bool,
     output_format: OutputFormat,
 ) -> i32 {
     let mut target = match Target::open(Path::new(path)) {
@@ -19,7 +19,10 @@ pub fn run(
     };
     let mut collector = Collector::new(output_format);
     collector.add(target.info());
-    target.extract(&mut collector);
+
+    let filter = ExtractFilter::from_flags(creds, keys, persist, all);
+    target.extract_filtered(&mut collector, &filter);
+
     if let Err(e) = collector.emit(&mut std::io::stdout()) {
         eprintln!("Error writing output: {}", e);
         return 2;
