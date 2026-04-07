@@ -1,6 +1,7 @@
 use abyss_cstruct::read::{read_bytes_at, read_u16_le, read_u32_le, read_utf16le, ReadSeek};
 use crate::error::RegistryError;
 use crate::key::KeyNode;
+use crate::value::{RegType, RegValue};
 
 /// Size of the base block (regf header) in bytes.
 const HIVE_HEADER_SIZE: u64 = 4096;
@@ -238,5 +239,188 @@ impl RegistryHive {
                 detail: format!("unknown nested list type {:?}", other),
             })),
         }
+    }
+
+    /// Read all values for a given key node.
+    pub fn read_values(&mut self, key: &KeyNode) -> Result<Vec<RegValue>, RegistryError> {
+        if key.num_values == 0 || key.values_list_offset == 0xFFFF_FFFF {
+            return Ok(Vec::new());
+        }
+
+        // The values list cell: HIVE_HEADER_SIZE + values_list_offset + 4 (skip cell size field).
+        let list_abs = HIVE_HEADER_SIZE + key.values_list_offset as u64 + 4;
+        let list_bytes = read_bytes_at(&mut self.reader, list_abs, key.num_values as usize * 4)?;
+
+        let mut values = Vec::with_capacity(key.num_values as usize);
+        for i in 0..key.num_values as usize {
+            let vk_offset = read_u32_le(&list_bytes, i * 4)?;
+            let value = self.read_vk_cell(vk_offset)?;
+            values.push(value);
+        }
+        Ok(values)
+    }
+
+    /// Read a single value by name (case-insensitive) from a key node.
+    pub fn read_value(&mut self, key: &KeyNode, name: &str) -> Result<RegValue, RegistryError> {
+        let values = self.read_values(key)?;
+        values
+            .into_iter()
+            .find(|v| v.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| RegistryError::ValueNotFound { name: name.to_string() })
+    }
+
+    /// Parse a vk (value key) cell at the given cell offset (relative to hive bins data).
+    fn read_vk_cell(&mut self, cell_offset: u32) -> Result<RegValue, RegistryError> {
+        let abs = HIVE_HEADER_SIZE + cell_offset as u64 + 4;
+
+        // Read fixed portion of vk cell (24 bytes header + up to some name bytes).
+        // First read 24 bytes for all fixed fields.
+        let fixed = read_bytes_at(&mut self.reader, abs, 24)?;
+
+        // Validate "vk" signature.
+        if &fixed[0..2] != b"vk" {
+            return Err(RegistryError::Parse(abyss_cstruct::ParseError::InvalidField {
+                field: "vk_signature",
+                detail: format!("expected 'vk', got {:?}", &fixed[0..2]),
+            }));
+        }
+
+        let name_length = read_u16_le(&fixed, 2)? as usize;
+        let data_length_raw = read_u32_le(&fixed, 4)?;
+        let data_offset = read_u32_le(&fixed, 8)?;
+        let data_type = read_u32_le(&fixed, 12)?;
+        let name_flags = read_u16_le(&fixed, 16)?;
+
+        // Parse value name: at offset 24 from cell data start.
+        let name = if name_length == 0 {
+            "(Default)".to_string()
+        } else {
+            let name_bytes = read_bytes_at(&mut self.reader, abs + 24, name_length)?;
+            if name_flags & 0x0001 != 0 {
+                // ASCII compressed name.
+                String::from_utf8_lossy(&name_bytes).into_owned()
+            } else {
+                read_utf16le(&name_bytes, 0, name_length)?
+            }
+        };
+
+        // Parse data: if bit 31 of data_length_raw is set, data is stored inline in data_offset.
+        let data = if data_length_raw & 0x8000_0000 != 0 {
+            // Inline data: actual length is lower bits (up to 4 bytes).
+            let actual_len = (data_length_raw & 0x7FFF_FFFF) as usize;
+            let actual_len = actual_len.min(4);
+            // data_offset field holds the inline bytes (little-endian u32).
+            let raw = data_offset.to_le_bytes();
+            raw[..actual_len].to_vec()
+        } else {
+            // External data cell.
+            let data_abs = HIVE_HEADER_SIZE + data_offset as u64 + 4;
+            let actual_len = data_length_raw as usize;
+            read_bytes_at(&mut self.reader, data_abs, actual_len)?
+        };
+
+        Ok(RegValue {
+            name,
+            reg_type: RegType::from(data_type),
+            data,
+        })
+    }
+
+    /// Return all subkey names for a key node.
+    pub fn subkey_names(&mut self, key: &KeyNode) -> Result<Vec<String>, RegistryError> {
+        let offsets = self.collect_subkey_offsets(key)?;
+        let mut names = Vec::with_capacity(offsets.len());
+        for offset in offsets {
+            let node = self.read_key_node(offset)?;
+            names.push(node.name);
+        }
+        Ok(names)
+    }
+
+    /// Collect all subkey cell offsets for a key node, handling lf/lh, li, and ri lists.
+    fn collect_subkey_offsets(&mut self, key: &KeyNode) -> Result<Vec<u32>, RegistryError> {
+        if key.num_subkeys == 0 || key.subkeys_list_offset == 0xFFFF_FFFF {
+            return Ok(Vec::new());
+        }
+
+        let list_abs = HIVE_HEADER_SIZE + key.subkeys_list_offset as u64 + 4;
+        let sig_buf = read_bytes_at(&mut self.reader, list_abs, 4)?;
+        let sig = &sig_buf[0..2];
+
+        match sig {
+            b"lf" | b"lh" => self.collect_lf_lh_offsets(key.subkeys_list_offset),
+            b"li" => self.collect_li_offsets(key.subkeys_list_offset),
+            b"ri" => self.collect_ri_offsets(key.subkeys_list_offset),
+            other => Err(RegistryError::Parse(abyss_cstruct::ParseError::InvalidField {
+                field: "subkey_list_signature",
+                detail: format!("unknown list type {:?}", other),
+            })),
+        }
+    }
+
+    fn collect_lf_lh_offsets(&mut self, list_offset: u32) -> Result<Vec<u32>, RegistryError> {
+        let abs = HIVE_HEADER_SIZE + list_offset as u64 + 4;
+        let header = read_bytes_at(&mut self.reader, abs, 4)?;
+        let count = read_u16_le(&header, 2)? as usize;
+        let entries = read_bytes_at(&mut self.reader, abs + 4, count * 8)?;
+        let mut offsets = Vec::with_capacity(count);
+        for i in 0..count {
+            offsets.push(read_u32_le(&entries, i * 8)?);
+        }
+        Ok(offsets)
+    }
+
+    fn collect_li_offsets(&mut self, list_offset: u32) -> Result<Vec<u32>, RegistryError> {
+        let abs = HIVE_HEADER_SIZE + list_offset as u64 + 4;
+        let header = read_bytes_at(&mut self.reader, abs, 4)?;
+        let count = read_u16_le(&header, 2)? as usize;
+        let entries = read_bytes_at(&mut self.reader, abs + 4, count * 4)?;
+        let mut offsets = Vec::with_capacity(count);
+        for i in 0..count {
+            offsets.push(read_u32_le(&entries, i * 4)?);
+        }
+        Ok(offsets)
+    }
+
+    fn collect_ri_offsets(&mut self, list_offset: u32) -> Result<Vec<u32>, RegistryError> {
+        let abs = HIVE_HEADER_SIZE + list_offset as u64 + 4;
+        let header = read_bytes_at(&mut self.reader, abs, 4)?;
+        let count = read_u16_le(&header, 2)? as usize;
+        let entries = read_bytes_at(&mut self.reader, abs + 4, count * 4)?;
+        let mut all_offsets = Vec::new();
+        for i in 0..count {
+            let sub_list_offset = read_u32_le(&entries, i * 4)?;
+            let sub_abs = HIVE_HEADER_SIZE + sub_list_offset as u64 + 4;
+            let sig_buf = read_bytes_at(&mut self.reader, sub_abs, 2)?;
+            let mut sub_offsets = match &sig_buf[0..2] {
+                b"lf" | b"lh" => self.collect_lf_lh_offsets(sub_list_offset)?,
+                b"li" => self.collect_li_offsets(sub_list_offset)?,
+                other => return Err(RegistryError::Parse(abyss_cstruct::ParseError::InvalidField {
+                    field: "subkey_list_signature",
+                    detail: format!("unknown nested list type {:?}", other),
+                })),
+            };
+            all_offsets.append(&mut sub_offsets);
+        }
+        Ok(all_offsets)
+    }
+
+    /// Read the class name bytes for a key node, if present.
+    ///
+    /// Returns `None` if the key has no class name.
+    pub fn read_class_name(&mut self, key: &KeyNode) -> Result<Option<Vec<u8>>, RegistryError> {
+        // class_offset is at nk cell data offset 44, class_length at offset 48.
+        let abs = HIVE_HEADER_SIZE + key.cell_offset as u64 + 4;
+        let buf = read_bytes_at(&mut self.reader, abs + 44, 6)?;
+        let class_offset = read_u32_le(&buf, 0)?;
+        let class_length = read_u16_le(&buf, 4)? as usize;
+
+        if class_length == 0 || class_offset == 0xFFFF_FFFF {
+            return Ok(None);
+        }
+
+        let class_abs = HIVE_HEADER_SIZE + class_offset as u64 + 4;
+        let data = read_bytes_at(&mut self.reader, class_abs, class_length)?;
+        Ok(Some(data))
     }
 }
