@@ -14,3 +14,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 rusqlite = { version = "0.34", features = ["bundled"] }
 aes-gcm = "0.10"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+des = "0.8"
+hmac = "0.12"
+sha2 = "0.10"

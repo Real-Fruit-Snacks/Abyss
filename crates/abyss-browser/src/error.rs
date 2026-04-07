@@ -17,6 +17,12 @@ pub enum BrowserError {
     #[error("AES-GCM decrypt error")]
     AesGcm,
 
+    #[error("AES-CBC decrypt error")]
+    AesCbc,
+
+    #[error("3DES-CBC decrypt error")]
+    TripleDesCbc,
+
     #[error("invalid data: {detail}")]
     InvalidData { detail: String },
 }
