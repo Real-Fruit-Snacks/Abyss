@@ -4,6 +4,7 @@ pub mod collector;
 pub mod error;
 pub mod finding;
 pub mod hashcat;
+pub mod html;
 pub mod json;
 pub mod text;
 

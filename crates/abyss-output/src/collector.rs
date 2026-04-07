@@ -8,6 +8,7 @@ pub enum OutputFormat {
     Text,
     Json,
     Hashcat,
+    Html,
 }
 
 /// Collects findings and emits them in the selected format.
@@ -54,6 +55,7 @@ impl Collector {
             OutputFormat::Text => crate::text::emit_text(&self.findings, writer),
             OutputFormat::Json => crate::json::emit_json(&self.findings, writer),
             OutputFormat::Hashcat => crate::hashcat::emit_hashcat(&self.findings, writer),
+            OutputFormat::Html => crate::html::emit_html(writer, &self.findings),
         }
     }
 }

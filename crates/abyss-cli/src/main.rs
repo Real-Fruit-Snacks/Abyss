@@ -17,7 +17,7 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// Output format: text, json
+    /// Output format: text, json, hashcat, html
     #[arg(short, long, default_value = "text", global = true)]
     output: String,
 
@@ -100,8 +100,9 @@ fn main() {
         "text" => OutputFormat::Text,
         "json" => OutputFormat::Json,
         "hashcat" => OutputFormat::Hashcat,
+        "html" => OutputFormat::Html,
         other => {
-            eprintln!("Error: unknown output format '{}' (valid: text, json, hashcat)", other);
+            eprintln!("Error: unknown output format '{}' (valid: text, json, hashcat, html)", other);
             std::process::exit(1);
         }
     };
