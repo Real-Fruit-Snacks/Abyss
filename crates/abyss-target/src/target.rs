@@ -17,7 +17,7 @@ use abyss_volume::{discover_partitions, Partition};
 use crate::detect::OsType;
 use crate::error::TargetError;
 use crate::extractor::{ExtractionContext, Extractor};
-use crate::extractors::{BrowserExtractor, CachedCredsExtractor, CloudExtractor, DpapiExtractor, FirefoxExtractor, LinuxCredsExtractor, LsaExtractor, NtdsExtractor, PersistenceExtractor, SamExtractor, SshExtractor};
+use crate::extractors::{BrowserExtractor, CachedCredsExtractor, CloudExtractor, DpapiExtractor, FirefoxExtractor, GppExtractor, LinuxCredsExtractor, LsaExtractor, NtdsExtractor, PersistenceExtractor, SamExtractor, SshExtractor};
 
 /// Reader that presents a slice of a SharedBlockDevice as a standalone ReadSeek.
 struct SliceReader {
@@ -84,6 +84,41 @@ impl ExtractFilter {
         match self {
             ExtractFilter::All => true,
             ExtractFilter::Categories(cats) => cats.iter().any(|c| c == category),
+        }
+    }
+}
+
+/// Recursively scan an NTFS directory for XML files and add them to the map.
+/// Best-effort: silently skips unreadable entries.
+fn scan_sysvol_for_gpp_xml(
+    ntfs: &mut abyss_ntfs::NtfsFilesystem,
+    dir_path: &str,
+    files: &mut std::collections::HashMap<String, Vec<u8>>,
+) {
+    let dir_idx = match ntfs.find_file(dir_path) {
+        Ok(idx) => idx,
+        Err(_) => return,
+    };
+    let entries = match ntfs.list_directory(dir_idx) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for (name, is_dir, _idx) in entries {
+        if name == "." || name == ".." || name.is_empty() {
+            continue;
+        }
+        let child_path = format!("{}/{}", dir_path, name);
+        if is_dir {
+            scan_sysvol_for_gpp_xml(ntfs, &child_path, files);
+        } else if name.to_lowercase().ends_with(".xml") {
+            if files.contains_key(&child_path) {
+                continue;
+            }
+            if let Ok(data) = ntfs.read_file(&child_path) {
+                if data.len() <= 50 * 1024 * 1024 {
+                    files.insert(child_path, data);
+                }
+            }
         }
     }
 }
@@ -635,6 +670,16 @@ impl Target {
                     }
                 }
             }
+
+            // Scan SYSVOL for GPP XML files containing cpassword
+            let sysvol_roots = [
+                "Windows/SYSVOL/domain/Policies",
+                "Windows/SYSVOL/sysvol",
+                "SYSVOL",
+            ];
+            for sysvol_root in &sysvol_roots {
+                scan_sysvol_for_gpp_xml(ntfs, sysvol_root, &mut ctx.filesystem_files);
+            }
         }
 
         Ok(ctx)
@@ -873,6 +918,7 @@ impl Target {
             ("creds", Box::new(BrowserExtractor)),
             ("creds", Box::new(FirefoxExtractor)),
             ("creds", Box::new(LinuxCredsExtractor)),
+            ("creds", Box::new(GppExtractor)),
             ("keys",  Box::new(SshExtractor)),
             ("keys",  Box::new(CloudExtractor)),
             ("persist", Box::new(PersistenceExtractor)),

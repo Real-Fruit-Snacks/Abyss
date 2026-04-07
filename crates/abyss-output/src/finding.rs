@@ -19,6 +19,7 @@ pub enum Finding {
     NtdsHash(NtdsHashFinding),
     CloudCredential(CloudCredentialFinding),
     MemoryCredential(MemoryCredentialFinding),
+    GppPassword(GppPasswordFinding),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -135,6 +136,15 @@ pub struct MemoryCredentialFinding {
     pub nt_hash: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct GppPasswordFinding {
+    pub username: String,
+    pub password: String,
+    pub changed: Option<String>,  // timestamp from XML
+    pub source_path: String,      // path to the XML file
+    pub policy_type: String,      // "Groups", "Services", "Drives", "DataSources", "ScheduledTasks"
+}
+
 /// Encode a byte slice as a lowercase hex string.
 pub fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
@@ -185,6 +195,7 @@ impl Finding {
             Finding::NtdsHash(_) => "ntds_hash",
             Finding::CloudCredential(_) => "cloud_credential",
             Finding::MemoryCredential(_) => "memory_credential",
+            Finding::GppPassword(_) => "gpp_password",
         }
     }
 }

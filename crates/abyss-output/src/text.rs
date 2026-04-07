@@ -213,6 +213,17 @@ pub fn emit_text(findings: &[Finding], writer: &mut dyn Write) -> Result<(), Out
                     }
                 )?;
             }
+            Finding::GppPassword(g) => {
+                writeln!(
+                    writer,
+                    "{} [{}] {}:{} (from {})",
+                    "[GPP]".bold().yellow(),
+                    g.policy_type,
+                    g.username,
+                    g.password,
+                    g.source_path
+                )?;
+            }
         }
     }
     Ok(())
