@@ -1,0 +1,22 @@
+[package]
+name = "abyss-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Windows credential crypto (SYSKEY derivation and SAM hash extraction) for Abyss"
+
+[dependencies]
+abyss-cstruct = { workspace = true }
+abyss-registry = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+md-5 = "0.10"
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+rc4 = "0.1"
+des = "0.8"
+pbkdf2 = { version = "0.12", features = ["hmac"] }
+typenum = "1"

@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+*.swp
+*.swo
+*~
+.DS_Store
+tests/fixtures/*.img
+tests/fixtures/*.vmdk
+tests/fixtures/*.qcow2
+.omc/

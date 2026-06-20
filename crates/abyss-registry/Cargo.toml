@@ -1,0 +1,11 @@
+[package]
+name = "abyss-registry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Windows registry hive parser for Abyss"
+
+[dependencies]
+abyss-cstruct = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

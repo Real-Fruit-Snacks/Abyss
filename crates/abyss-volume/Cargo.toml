@@ -1,0 +1,12 @@
+[package]
+name = "abyss-volume"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Partition and volume management for Abyss"
+
+[dependencies]
+abyss-cstruct = { workspace = true }
+abyss-container = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }

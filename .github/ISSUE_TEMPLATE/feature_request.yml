@@ -1,0 +1,30 @@
+name: Feature Request
+description: Suggest a feature for Abyss
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - New disk format
+        - New filesystem
+        - New credential extractor
+        - Memory analysis
+        - Output format
+        - Performance
+        - Other
+    validations:
+      required: true
